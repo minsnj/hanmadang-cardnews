@@ -1,0 +1,562 @@
+#!/usr/bin/env python3
+"""
+한마당 카드뉴스 자동 생성기
+Google Sheets에서 당일 뉴스를 크롤링해 카드뉴스 HTML을 자동 생성합니다.
+
+사용법:
+  python3 generate_cardnews.py          # 오늘 날짜 뉴스
+  python3 generate_cardnews.py 2026-05-07  # 특정 날짜 뉴스
+"""
+
+import csv
+import io
+import re
+import os
+import sys
+import glob
+import urllib.request
+import urllib.error
+from datetime import date, datetime
+from html import escape
+try:
+    import anthropic
+except ImportError:
+    anthropic = None
+
+# .env 파일에서 환경 변수 로드
+def _load_env():
+    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    if not os.path.exists(env_path):
+        return
+    with open(env_path) as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                os.environ.setdefault(k.strip(), v.strip())
+
+_load_env()
+
+# ── 설정 ──────────────────────────────────────────────
+SHEET_ID   = "18BUYAw1ruBDUEbvxg8AUpm9WOCsvB6iZy1amAzCpgKg"
+SHEET_URL  = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid=0"
+OUTPUT     = os.path.join(os.path.dirname(os.path.abspath(__file__)), "카드뉴스.html")
+MAX_CARDS  = 7   # 최대 기사 카드 수 (커버·아웃트로 제외)
+TIMEOUT    = 12
+
+FETCH_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8",
+}
+
+# 카테고리별 폴백 이미지 (기사 이미지 없을 때)
+FALLBACK_IMAGES = {
+    "정치": "https://images.unsplash.com/photo-1529107386315-e1a2ed48a620?w=800&q=80",
+    "경제": "https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?w=800&q=80",
+    "사회": "https://images.unsplash.com/photo-1529156069898-49953e39b3ac?w=800&q=80",
+    "보건": "https://images.unsplash.com/photo-1584036561566-baf8f5f1b144?w=800&q=80",
+    "교육": "https://images.unsplash.com/photo-1503676260728-1c00da094a0b?w=800&q=80",
+    "범죄": "https://images.unsplash.com/photo-1589829545856-d10d557cf95f?w=800&q=80",
+    "외교": "https://images.unsplash.com/photo-1529107386315-e1a2ed48a620?w=800&q=80",
+    "환경": "https://images.unsplash.com/photo-1441974231531-c6227db76b6e?w=800&q=80",
+    "교통": "https://images.unsplash.com/photo-1519003722824-194d4455a60c?w=800&q=80",
+    "기타": "https://images.unsplash.com/photo-1504711434969-e33886168f5c?w=800&q=80",
+}
+DEFAULT_FALLBACK = "https://images.unsplash.com/photo-1504711434969-e33886168f5c?w=800&q=80"
+
+
+# ── HTTP 유틸 ─────────────────────────────────────────
+def http_get(url, timeout=TIMEOUT):
+    req = urllib.request.Request(url, headers=FETCH_HEADERS)
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        # 리다이렉트 처리
+        final = r.url
+        if final != url:
+            req2 = urllib.request.Request(final, headers=FETCH_HEADERS)
+            with urllib.request.urlopen(req2, timeout=timeout) as r2:
+                return r2.read().decode("utf-8", errors="ignore")
+        return r.read().decode("utf-8", errors="ignore")
+
+
+# ── 스프레드시트 ──────────────────────────────────────
+def fetch_sheet():
+    print("📥 Google Sheets 데이터 가져오는 중...")
+    raw = http_get(SHEET_URL)
+    reader = csv.reader(io.StringIO(raw))
+    rows = list(reader)
+    if rows:
+        rows = rows[1:]   # 헤더 제거
+    print(f"   총 {len(rows)}개 기사 로드됨")
+    return rows
+
+
+def filter_by_date(rows, target_date: str):
+    """target_date: 'YYYY-MM-DD' 형식 — 수집시각(G열) 기준으로 필터"""
+    result = [r for r in rows if len(r) >= 7 and r[6].startswith(target_date)]
+    print(f"   수집시각 기준 {target_date} 기사: {len(result)}개")
+    return result
+
+
+# ── OG 이미지 추출 ────────────────────────────────────
+OG_PATTERNS = [
+    r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\'](https?://[^"\'>\s]+)',
+    r'<meta[^>]+content=["\'](https?://[^"\'>\s]+)["\'][^>]+property=["\']og:image["\']',
+    r'<meta[^>]+name=["\']twitter:image["\'][^>]+content=["\'](https?://[^"\'>\s]+)',
+    r'<meta[^>]+content=["\'](https?://[^"\'>\s]+)["\'][^>]+name=["\']twitter:image["\']',
+]
+
+def get_og_image(url, fallback=""):
+    if not url or not url.startswith("http"):
+        return fallback
+    try:
+        html = http_get(url, timeout=10)
+        for pat in OG_PATTERNS:
+            m = re.search(pat, html, re.IGNORECASE)
+            if m:
+                img = m.group(1).strip()
+                if img and not img.endswith(".svg"):
+                    return img
+    except Exception as e:
+        print(f"   ⚠️  이미지 추출 실패 ({url[:60]}...): {e}")
+    return fallback
+
+
+# ── 요약 ─────────────────────────────────────────────
+def _ai_summarize(title, summary):
+    """Claude API로 카드뉴스용 2~3문장 요약 (API 키 있을 때)"""
+    msg = anthropic.Anthropic().messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=200,
+        messages=[{
+            "role": "user",
+            "content": (
+                f"다음 말레이시아 뉴스를 카드뉴스용으로 2~3문장(4~5줄)으로 "
+                f"자연스럽게 한국어 요약해줘. 핵심 정보만 담고 간결하게. 요약문만 출력해.\n\n"
+                f"제목: {title}\n내용: {summary}"
+            ),
+        }],
+    )
+    return msg.content[0].text.strip()
+
+
+def _sentence_summarize(text, max_sentences=3):
+    """API 키 없을 때: 첫 2~3문장 추출"""
+    sentences = re.split(r'(?<=[.!?。]) +|(?<=다\.) +|(?<=다) (?=[가-힣A-Z])', text)
+    sentences = [s.strip() for s in sentences if s.strip()]
+    return ' '.join(sentences[:max_sentences])
+
+
+def summarize(title, summary):
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if api_key and anthropic:
+        try:
+            return _ai_summarize(title, summary)
+        except Exception as e:
+            print(f"   ⚠️  AI 요약 실패: {e}")
+    return _sentence_summarize(summary)
+
+
+# ── HTML 생성 ─────────────────────────────────────────
+CSS = """
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&display=swap');
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Noto Sans KR', 'Apple SD Gothic Neo', sans-serif;
+    background: #e8e8e8;
+    display: flex; flex-direction: column; align-items: center; padding: 40px 20px;
+  }
+  .slideshow-wrapper { position: relative; width: 540px; }
+  .slides { overflow: hidden; width: 540px; }
+  .slide-track { display: flex; transition: transform 0.38s cubic-bezier(0.4,0,0.2,1); will-change: transform; }
+  .nav { display: flex; align-items: center; justify-content: center; gap: 14px; margin-top: 22px; }
+  .nav button {
+    width: 40px; height: 40px; border: none; border-radius: 50%;
+    background: rgba(0,0,0,0.15); color: #333; font-size: 18px; cursor: pointer;
+    transition: background 0.2s; display: flex; align-items: center; justify-content: center;
+  }
+  .nav button:hover { background: rgba(0,0,0,0.28); }
+  .nav button:disabled { opacity: 0.25; cursor: default; }
+  .dots { display: flex; gap: 7px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: rgba(0,0,0,0.2); cursor: pointer; transition: all 0.2s; }
+  .dot.active { background: #F97316; width: 22px; border-radius: 4px; }
+  .slide-counter { text-align: center; font-size: 13px; color: #999; margin-top: 10px; }
+  .card { width: 540px; height: 675px; position: relative; overflow: hidden; flex-shrink: 0; }
+  .badge {
+    display: inline-block; background: #F97316; color: #fff;
+    font-size: 11px; font-weight: 700; padding: 6px 15px; border-radius: 30px; letter-spacing: 1px;
+  }
+  .wm { position: absolute; z-index: 30; font-size: 12px; font-weight: 800; letter-spacing: 3px; }
+  .wm-dark { bottom: 22px; right: 24px; color: rgba(255,255,255,0.9); background: rgba(0,0,0,0.28); padding: 4px 10px; border-radius: 4px; }
+  .wm-light { top: 38px; right: 36px; color: #F97316; background: rgba(255,255,255,0.9); padding: 4px 10px; border-radius: 4px; }
+  /* COVER */
+  .card-cover { background: #111; }
+  .cover-bg { position: absolute; inset: 0; background-size: cover; background-position: center; opacity: 0.55; }
+  .cover-grad { position: absolute; inset: 0; background: linear-gradient(to top, rgba(10,10,10,0.9) 0%, rgba(10,10,10,0.45) 55%, transparent 100%); }
+  .cover-body { position: absolute; bottom: 0; left: 0; right: 0; z-index: 5; padding: 0 36px 52px; }
+  .cover-body .badge { margin-bottom: 20px; }
+  .cover-body h1 { font-size: 50px; font-weight: 900; color: #fff; line-height: 1.18; margin-bottom: 14px; word-break: keep-all; }
+  .cover-body p { font-size: 14px; color: rgba(255,255,255,0.65); line-height: 1.65; word-break: keep-all; }
+  .cover-arrow { position: absolute; bottom: 36px; right: 36px; z-index: 5; color: rgba(255,255,255,0.7); font-size: 22px; font-weight: 700; letter-spacing: -2px; }
+  /* CH01 */
+  .card-ch01 { background: #fff; }
+  .ch01-top { padding: 40px 36px 24px; }
+  .ch01-top .badge { margin-bottom: 20px; }
+  .ch01-top h2 { font-size: 40px; font-weight: 900; color: #1a1a1a; line-height: 1.18; margin-bottom: 18px; word-break: keep-all; }
+  .ch01-top p { font-size: 14px; color: #555; line-height: 1.75; word-break: keep-all; }
+  .ch01-top .src { font-size: 11px; color: #bbb; margin-top: 14px; }
+  .ch01-img { position: absolute; bottom: 0; left: 0; right: 0; height: 300px; }
+  .ch01-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .ch01-img::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 80px; background: linear-gradient(to bottom, white, transparent); z-index: 2; }
+  /* CH03 */
+  .card-ch03 { background: #111; }
+  .ch03-bg { position: absolute; inset: 0; background-size: cover; background-position: center; opacity: 0.5; }
+  .ch03-grad { position: absolute; inset: 0; background: linear-gradient(to top, rgba(5,5,5,0.92) 0%, rgba(5,5,5,0.5) 45%, rgba(0,0,0,0.1) 100%); }
+  .ch03-num { position: absolute; top: 38px; left: 36px; z-index: 5; }
+  .ch03-body { position: absolute; bottom: 0; left: 0; right: 0; z-index: 5; padding: 0 36px 52px; }
+  .ch03-body .badge { margin-bottom: 20px; }
+  .ch03-body h2 { font-size: 42px; font-weight: 900; color: #fff; line-height: 1.2; margin-bottom: 16px; word-break: keep-all; }
+  .ch03-body p { font-size: 14px; color: rgba(255,255,255,0.75); line-height: 1.75; word-break: keep-all; }
+  .ch03-body .src { font-size: 11px; color: rgba(255,255,255,0.32); margin-top: 14px; }
+  /* OUTRO */
+  .card-outro { background: #111; }
+  .outro-bg { position: absolute; inset: 0; background-size: cover; background-position: center; opacity: 0.3; }
+  .outro-grad { position: absolute; inset: 0; background: rgba(10,10,10,0.72); }
+  .outro-body { position: relative; z-index: 5; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 48px; text-align: center; }
+  .outro-logo { font-size: 40px; font-weight: 900; color: #F97316; letter-spacing: 6px; margin-bottom: 20px; }
+  .outro-line { width: 44px; height: 3px; background: #F97316; border-radius: 2px; margin: 0 auto 28px; }
+  .outro-body h2 { font-size: 26px; font-weight: 800; color: #fff; line-height: 1.45; word-break: keep-all; margin-bottom: 18px; }
+  .outro-body p { font-size: 14px; color: rgba(255,255,255,0.5); line-height: 1.8; word-break: keep-all; margin-bottom: 44px; }
+  .outro-tags { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
+  .outro-tag { border: 1.5px solid rgba(249,115,22,0.45); color: rgba(249,115,22,0.85); font-size: 12px; font-weight: 600; padding: 6px 14px; border-radius: 20px; }
+  .gen-info { font-size: 12px; color: #aaa; text-align: center; margin-top: 10px; }
+"""
+
+JS = """
+  const TOTAL = {total};
+  let cur = 0;
+  const track   = document.getElementById('slideTrack');
+  const dotsEl  = document.getElementById('dots');
+  const counter = document.getElementById('counter');
+  const btnPrev = document.getElementById('btnPrev');
+  const btnNext = document.getElementById('btnNext');
+  for (let i = 0; i < TOTAL; i++) {
+    const d = document.createElement('div');
+    d.className = 'dot';
+    d.onclick = () => go(i);
+    dotsEl.appendChild(d);
+  }
+  function go(n) {
+    if (n < 0 || n >= TOTAL) return;
+    cur = n;
+    track.style.transform = `translateX(${-540 * cur}px)`;
+    dotsEl.querySelectorAll('.dot').forEach((d, i) => d.classList.toggle('active', i === cur));
+    btnPrev.disabled = cur === 0;
+    btnNext.disabled = cur === TOTAL - 1;
+    counter.textContent = `${cur + 1} / ${TOTAL}`;
+  }
+  document.addEventListener('keydown', e => {
+    if (e.key === 'ArrowRight') go(cur + 1);
+    if (e.key === 'ArrowLeft')  go(cur - 1);
+  });
+  let tx = 0;
+  track.addEventListener('touchstart', e => tx = e.touches[0].clientX);
+  track.addEventListener('touchend',   e => { const d = tx - e.changedTouches[0].clientX; if (Math.abs(d) > 50) go(cur + (d > 0 ? 1 : -1)); });
+  go(0);
+"""
+
+
+def card_cover(cover_img, target_date):
+    dt = datetime.strptime(target_date, "%Y-%m-%d")
+    date_str = dt.strftime("%Y년 %m월 %d일")
+    weekday  = ["월", "화", "수", "목", "금", "토", "일"][dt.weekday()]
+    return f"""
+      <div class="card card-cover">
+        <div class="cover-bg" style="background-image:url('{escape(cover_img)}')"></div>
+        <div class="cover-grad"></div>
+        <div class="cover-body">
+          <div class="badge">TODAY'S NEWS</div>
+          <h1>실시간<br>말레이시아 뉴스</h1>
+          <p>{date_str} ({weekday})<br>오늘의 말레이시아 주요 소식</p>
+        </div>
+        <div class="cover-arrow">&rsaquo;&rsaquo;</div>
+        <span class="wm wm-light">한마당</span>
+      </div>"""
+
+
+def card_ch01(num, title, summary, img_url, cat, pub_date):
+    img_html = f'<img src="{escape(img_url)}" alt="" loading="lazy">' if img_url else \
+               f'<div style="width:100%;height:100%;background:#ddd"></div>'
+    return f"""
+      <div class="card card-ch01">
+        <div class="ch01-top">
+          <div class="badge">CHAPTER {num:02d}</div>
+          <h2>{escape(title)}</h2>
+          <p>{escape(summary)}</p>
+          <div class="src">출처: {escape(cat)} · {escape(pub_date)}</div>
+        </div>
+        <div class="ch01-img">{img_html}</div>
+        <span class="wm wm-light">한마당</span>
+      </div>"""
+
+
+def card_ch03(num, title, summary, img_url, cat, pub_date):
+    bg = f"background-image:url('{escape(img_url)}')" if img_url else "background:#222"
+    return f"""
+      <div class="card card-ch03">
+        <div class="ch03-bg" style="{bg}"></div>
+        <div class="ch03-grad"></div>
+        <div class="ch03-num"><span class="badge">CHAPTER {num:02d}</span></div>
+        <div class="ch03-body">
+          <h2>{escape(title)}</h2>
+          <p>{escape(summary)}</p>
+          <div class="src">출처: {escape(cat)} · {escape(pub_date)}</div>
+        </div>
+        <span class="wm wm-light">한마당</span>
+      </div>"""
+
+
+def card_outro(outro_img, target_date):
+    return f"""
+      <div class="card card-outro">
+        <div class="outro-bg" style="background-image:url('{escape(outro_img)}')"></div>
+        <div class="outro-grad"></div>
+        <div class="outro-body">
+          <div class="outro-logo">한마당</div>
+          <div class="outro-line"></div>
+          <h2>더 많은 말레이시아 소식을<br>한마당에서 만나세요</h2>
+          <p>매일 업데이트되는 말레이시아 실시간 뉴스<br>정치·경제·사회·문화를 한눈에</p>
+          <div class="outro-tags">
+            <span class="outro-tag">#말레이시아뉴스</span>
+            <span class="outro-tag">#한마당</span>
+            <span class="outro-tag">#실시간뉴스</span>
+            <span class="outro-tag">#{target_date.replace('-','')}</span>
+          </div>
+        </div>
+        <span class="wm wm-light">한마당</span>
+      </div>"""
+
+
+def build_html(slides_html, total, gen_time):
+    js = JS.replace("{total}", str(total))
+    return f"""<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>한마당 실시간 카드뉴스</title>
+<style>{CSS}</style>
+</head>
+<body>
+<div class="slideshow-wrapper">
+  <div class="slides">
+    <div class="slide-track" id="slideTrack">
+{slides_html}
+    </div>
+  </div>
+  <div class="nav">
+    <button id="btnPrev" onclick="go(cur-1)">&#8592;</button>
+    <div class="dots" id="dots"></div>
+    <button id="btnNext" onclick="go(cur+1)">&#8594;</button>
+  </div>
+  <div class="slide-counter" id="counter"></div>
+</div>
+<div class="gen-info">자동 생성: {gen_time}</div>
+<script>{js}</script>
+</body>
+</html>"""
+
+
+# ── 이미지 내보내기 ───────────────────────────────────
+def export_images(html_path, total_cards, target_date):
+    """playwright로 각 카드를 1080×1350 PNG로 저장"""
+    from playwright.sync_api import sync_playwright
+
+    out_dir = os.path.join(os.path.dirname(html_path), "템플릿")
+    os.makedirs(out_dir, exist_ok=True)
+
+    print(f"\n📸 이미지 내보내는 중 → {out_dir}")
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page(
+            viewport={"width": 540, "height": 675},
+            device_scale_factor=2,   # 2× → 1080×1350px
+        )
+        page.goto(f"file://{html_path}", wait_until="networkidle")
+        # 웹폰트 로딩 대기
+        page.wait_for_timeout(1500)
+
+        for i in range(total_cards):
+            # 해당 슬라이드로 이동
+            page.evaluate(f"go({i})")
+            page.wait_for_timeout(500)
+
+            card = page.query_selector(".slide-track .card:nth-child({})".format(i + 1))
+            path = os.path.join(out_dir, f"템플릿{i+1}.png")
+            card.screenshot(path=path)
+            print(f"   ✅ 템플릿{i+1}.png")
+
+        browser.close()
+
+    print(f"\n🎉 {total_cards}장 저장 완료: {out_dir}\n")
+    return out_dir
+
+
+# ── 인스타그램 포스팅 ─────────────────────────────────
+def post_to_instagram(image_dir, target_date):
+    """instagrapi로 카드뉴스 이미지를 인스타그램 캐러셀로 업로드"""
+    username = os.environ.get("INSTAGRAM_USERNAME", "")
+    password = os.environ.get("INSTAGRAM_PASSWORD", "")
+
+    if not username or not password or username == "your_username":
+        print("⚠️  인스타그램 계정 정보가 .env에 설정되지 않았습니다. 포스팅을 건너뜁니다.")
+        return
+
+    try:
+        from instagrapi import Client
+    except ImportError:
+        print("⚠️  instagrapi가 설치되지 않았습니다. pip3 install instagrapi")
+        return
+
+    # 이미지 목록 수집 (card_01.png ~ 순서대로)
+    images = sorted(glob.glob(os.path.join(image_dir, "템플릿*.png")), key=lambda x: int(re.search(r'\d+', os.path.basename(x)).group()))
+    if not images:
+        print("⚠️  포스팅할 이미지가 없습니다.")
+        return
+
+    dt = datetime.strptime(target_date, "%Y-%m-%d")
+    date_str = dt.strftime("%Y년 %m월 %d일")
+    weekday  = ["월", "화", "수", "목", "금", "토", "일"][dt.weekday()]
+
+    caption = (
+        f"📰 {date_str} ({weekday}) 말레이시아 실시간 뉴스\n\n"
+        "오늘의 말레이시아 주요 소식을 한마당이 전합니다.\n"
+        "스와이프해서 더 많은 뉴스를 확인하세요 👉\n\n"
+        "#말레이시아뉴스 #한마당 #실시간뉴스 #말레이시아 #Malaysia "
+        f"#{target_date.replace('-', '')} #해외뉴스 #카드뉴스"
+    )
+
+    totp_secret = os.environ.get("INSTAGRAM_TOTP_SECRET", "").replace(" ", "")
+
+    def _login(client):
+        if totp_secret:
+            import pyotp
+            code = pyotp.TOTP(totp_secret).now()
+            client.login(username, password, verification_code=code)
+        else:
+            client.login(username, password)
+
+    session_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "session.json")
+
+    cl = Client()
+    cl.delay_range = [1, 3]
+
+    def _fresh_login():
+        cl2 = Client()
+        cl2.delay_range = [1, 3]
+        _login(cl2)
+        cl2.dump_settings(session_path)
+        print("   신규 로그인 성공")
+        return cl2
+
+    # 저장된 세션 로드 후 실제 인증 여부 검증, 실패 시 재로그인
+    if os.path.exists(session_path):
+        try:
+            cl.load_settings(session_path)
+            _login(cl)
+            cl.account_info()  # 실제 인증 검증
+            cl.dump_settings(session_path)
+            print("   세션 재사용 로그인 성공")
+        except Exception as e:
+            print(f"   세션 만료, 재로그인 중... ({e})")
+            cl = _fresh_login()
+    else:
+        cl = _fresh_login()
+
+    print(f"\n📤 인스타그램 업로드 중... ({len(images)}장)")
+    if len(images) == 1:
+        media = cl.photo_upload(images[0], caption=caption)
+    else:
+        media = cl.album_upload(images, caption=caption)
+
+    print(f"   ✅ 업로드 완료! media_id={media.id}")
+
+
+# ── 메인 ──────────────────────────────────────────────
+def main():
+    target_date = sys.argv[1] if len(sys.argv) > 1 else date.today().strftime("%Y-%m-%d")
+    print(f"\n🗓  대상 날짜: {target_date}")
+
+    # 1. 시트 데이터 가져오기
+    rows = fetch_sheet()
+
+    # 2. 당일 뉴스 필터
+    today_rows = filter_by_date(rows, target_date)
+    if not today_rows:
+        print(f"❌ {target_date} 날짜의 기사가 없습니다.")
+        sys.exit(1)
+
+    # 3. 최대 MAX_CARDS 개 선택
+    selected = today_rows[:MAX_CARDS]
+
+    # 4. 각 기사 OG 이미지 크롤링
+    print(f"\n🖼  기사 이미지 크롤링 중 ({len(selected)}개)...")
+    articles = []
+    for i, row in enumerate(selected):
+        date_str = row[0][:10]   # YYYY-MM-DD
+        cat      = row[1].strip()
+        title_kr = row[3].strip()
+        summary  = row[4].strip()
+        url      = row[5].strip()
+
+        print(f"   [{i+1}/{len(selected)}] {title_kr[:30]}...")
+        fallback = FALLBACK_IMAGES.get(cat, DEFAULT_FALLBACK)
+        img = get_og_image(url, fallback)
+        short = summarize(title_kr, summary)
+
+        articles.append({
+            "cat": cat, "title": title_kr, "summary": short,
+            "img": img, "date": date_str, "url": url,
+        })
+
+    # 5. HTML 슬라이드 조립
+    cover_img = articles[0]["img"] if articles else DEFAULT_FALLBACK
+    outro_img = articles[-1]["img"] if articles else DEFAULT_FALLBACK
+
+    slides = [card_cover(cover_img, target_date)]
+
+    for i, art in enumerate(articles):
+        num = i + 1
+        if i % 2 == 0:
+            slides.append(card_ch01(num, art["title"], art["summary"], art["img"], art["cat"], art["date"]))
+        else:
+            slides.append(card_ch03(num, art["title"], art["summary"], art["img"], art["cat"], art["date"]))
+
+    slides.append(card_outro(outro_img, target_date))
+
+    total      = len(slides)
+    gen_time   = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    html       = build_html("\n".join(slides), total, gen_time)
+
+    # 6. 파일 저장
+    with open(OUTPUT, "w", encoding="utf-8") as f:
+        f.write(html)
+
+    print(f"\n✅ 완료! 총 {total}장 ({len(articles)}개 기사)")
+    print(f"   저장 위치: {OUTPUT}")
+    print(f"   생성 시각: {gen_time}")
+
+    # PNG 이미지 내보내기
+    image_dir = export_images(OUTPUT, total, target_date)
+
+    # 인스타그램 자동 포스팅
+    post_to_instagram(image_dir, target_date)
+
+
+if __name__ == "__main__":
+    main()

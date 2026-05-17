@@ -1,0 +1,40 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__Claude_in_Chrome__tabs_context_mcp",
+      "mcp__Claude_in_Chrome__browser_batch",
+      "mcp__Claude_in_Chrome__navigate",
+      "mcp__Claude_in_Chrome__computer",
+      "mcp__Claude_in_Chrome__get_page_text",
+      "mcp__Claude_in_Chrome__javascript_tool",
+      "WebFetch(domain:docs.google.com)",
+      "WebFetch(domain:doc-0s-84-sheets.googleusercontent.com)",
+      "WebFetch(domain:www.thestar.com.my)",
+      "WebFetch(domain:www.bernama.com)",
+      "WebFetch(domain:www.nst.com.my)",
+      "WebFetch(domain:www.malaymail.com)",
+      "mcp__firecrawl__firecrawl_scrape",
+      "Bash(python3 generate_cardnews.py 2026-05-07)",
+      "Bash(python3 generate_cardnews.py)",
+      "Bash(python3 -c \"import anthropic; print\\(anthropic.__version__\\)\")",
+      "Bash(python3 -m playwright --version)",
+      "Bash(python3 -m playwright install chromium)",
+      "Bash(python3 generate_cardnews.py 2026-05-15)",
+      "Bash(python3 -c ' *)",
+      "Bash(python3 -c \"import instagrapi; print\\(instagrapi.__version__\\)\")",
+      "Bash(pip3 install *)",
+      "Bash(crontab -l)",
+      "mcp__scheduled-tasks__create_scheduled_task",
+      "Bash(crontab -)",
+      "Bash(mkdir -p /Users/minsu/Documents/Projects/카드뉴스/.claude)",
+      "Bash(/opt/anaconda3/bin/python3 generate_cardnews.py)",
+      "Bash(echo \"Exit code: $?\")",
+      "Bash(/opt/anaconda3/bin/python3 generate_cardnews.py >> /Users/minsu/Documents/Projects/카드뉴스/cardnews.log 2>&1; echo \"Exit code: $?\")",
+      "Skill(schedule)",
+      "Skill(schedule:*)",
+      "Bash(git init *)",
+      "Bash(git add *)",
+      "Bash(git commit *)"
+    ]
+  }
+}

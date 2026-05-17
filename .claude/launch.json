@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "카드뉴스 생성기",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["generate_cardnews.py"],
+      "port": null
+    },
+    {
+      "name": "HTML 미리보기 서버",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "8080"],
+      "port": 8080
+    }
+  ]
+}
