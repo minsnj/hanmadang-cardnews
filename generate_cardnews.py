@@ -376,7 +376,7 @@ def export_images(html_path, total_cards, target_date):
     """playwright로 각 카드를 1080×1350 PNG로 저장"""
     from playwright.sync_api import sync_playwright
 
-    out_dir = os.path.join(os.path.dirname(html_path), "템플릿")
+    out_dir = os.path.join(os.path.dirname(html_path), "images", target_date)
     os.makedirs(out_dir, exist_ok=True)
 
     print(f"\n📸 이미지 내보내는 중 → {out_dir}")
