@@ -102,6 +102,32 @@ def filter_by_date(rows, target_date: str):
     return result
 
 
+# ── 뉴스 출처 추출 ───────────────────────────────────
+SOURCE_MAP = {
+    "nst.com.my":        "NST",
+    "malaymail.com":     "Malay Mail",
+    "bernama.com":       "Bernama",
+    "thestar.com.my":    "The Star",
+    "freemalaysiatoday": "FMT",
+    "malaysiakini.com":  "Malaysiakini",
+    "sinchew":           "Sin Chew",
+    "hmetro.com.my":     "Harian Metro",
+    "utusan.com.my":     "Utusan",
+    "astroawani.com":    "Astro Awani",
+}
+
+def get_source_name(url):
+    for key, name in SOURCE_MAP.items():
+        if key in url:
+            return name
+    # 도메인 기반 자동 추출
+    m = re.search(r'https?://(?:www\.)?([^/]+)', url)
+    if m:
+        domain = m.group(1).split('.')[0].upper()
+        return domain
+    return "뉴스"
+
+
 # ── OG 이미지 추출 ────────────────────────────────────
 OG_PATTERNS = [
     r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\'](https?://[^"\'>\s]+)',
@@ -288,24 +314,26 @@ def card_cover(cover_img, target_date):
       </div>"""
 
 
-def card_ch01(num, title, summary, img_url, cat, pub_date):
+def card_ch01(num, title, summary, img_url, url):
     img_html = f'<img src="{escape(img_url)}" alt="" loading="lazy">' if img_url else \
                f'<div style="width:100%;height:100%;background:#ddd"></div>'
+    source = get_source_name(url)
     return f"""
       <div class="card card-ch01">
         <div class="ch01-top">
           <div class="badge">CHAPTER {num:02d}</div>
           <h2>{escape(title)}</h2>
           <p>{escape(summary)}</p>
-          <div class="src">출처: {escape(cat)} · {escape(pub_date)}</div>
+          <div class="src">출처 : {escape(source)}</div>
         </div>
         <div class="ch01-img">{img_html}</div>
         <span class="wm wm-light">한마당</span>
       </div>"""
 
 
-def card_ch03(num, title, summary, img_url, cat, pub_date):
+def card_ch03(num, title, summary, img_url, url):
     bg = f"background-image:url('{escape(img_url)}')" if img_url else "background:#222"
+    source = get_source_name(url)
     return f"""
       <div class="card card-ch03">
         <div class="ch03-bg" style="{bg}"></div>
@@ -314,7 +342,7 @@ def card_ch03(num, title, summary, img_url, cat, pub_date):
         <div class="ch03-body">
           <h2>{escape(title)}</h2>
           <p>{escape(summary)}</p>
-          <div class="src">출처: {escape(cat)} · {escape(pub_date)}</div>
+          <div class="src">출처 : {escape(source)}</div>
         </div>
         <span class="wm wm-light">한마당</span>
       </div>"""
@@ -533,9 +561,9 @@ def main():
     for i, art in enumerate(articles):
         num = i + 1
         if i % 2 == 0:
-            slides.append(card_ch01(num, art["title"], art["summary"], art["img"], art["cat"], art["date"]))
+            slides.append(card_ch01(num, art["title"], art["summary"], art["img"], art["url"]))
         else:
-            slides.append(card_ch03(num, art["title"], art["summary"], art["img"], art["cat"], art["date"]))
+            slides.append(card_ch03(num, art["title"], art["summary"], art["img"], art["url"]))
 
     slides.append(card_outro(outro_img, target_date))
 
