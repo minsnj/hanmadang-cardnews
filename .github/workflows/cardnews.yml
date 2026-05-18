@@ -2,7 +2,7 @@ name: 한마당 카드뉴스 자동 포스팅
 
 on:
   schedule:
-    - cron: '00 * * *'
+    - cron: '0 0 * * *'
   workflow_dispatch:
 
 jobs:
