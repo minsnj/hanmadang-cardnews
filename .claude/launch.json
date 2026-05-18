@@ -9,9 +9,10 @@
     },
     {
       "name": "HTML 미리보기 서버",
-      "runtimeExecutable": "python3",
-      "runtimeArgs": ["-m", "http.server", "8080"],
-      "port": 8080
+      "runtimeExecutable": "/opt/anaconda3/bin/python3",
+      "runtimeArgs": ["-m", "http.server", "8080", "--directory", "/Users/minsu/Documents/Projects/카드뉴스"],
+      "port": 8080,
+      "autoPort": false
     }
   ]
 }

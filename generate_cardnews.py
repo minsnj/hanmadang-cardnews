@@ -74,7 +74,6 @@ DEFAULT_FALLBACK = "https://images.unsplash.com/photo-1504711434969-e33886168f5c
 def http_get(url, timeout=TIMEOUT):
     req = urllib.request.Request(url, headers=FETCH_HEADERS)
     with urllib.request.urlopen(req, timeout=timeout) as r:
-        # 리다이렉트 처리
         final = r.url
         if final != url:
             req2 = urllib.request.Request(final, headers=FETCH_HEADERS)
@@ -120,7 +119,6 @@ def get_source_name(url):
     for key, name in SOURCE_MAP.items():
         if key in url:
             return name
-    # 도메인 기반 자동 추출
     m = re.search(r'https?://(?:www\.)?([^/]+)', url)
     if m:
         domain = m.group(1).split('.')[0].upper()
@@ -154,7 +152,6 @@ def get_og_image(url, fallback=""):
 
 # ── 요약 ─────────────────────────────────────────────
 def _ai_summarize(title, summary):
-    """Claude API로 카드뉴스용 2~3문장 요약 (API 키 있을 때)"""
     msg = anthropic.Anthropic().messages.create(
         model="claude-haiku-4-5-20251001",
         max_tokens=200,
@@ -171,7 +168,6 @@ def _ai_summarize(title, summary):
 
 
 def _sentence_summarize(text, max_sentences=3):
-    """API 키 없을 때: 첫 2~3문장 추출"""
     sentences = re.split(r'(?<=[.!?。]) +|(?<=다\.) +|(?<=다) (?=[가-힣A-Z])', text)
     sentences = [s.strip() for s in sentences if s.strip()]
     return ' '.join(sentences[:max_sentences])
@@ -212,51 +208,50 @@ CSS = """
   .dot.active { background: #F97316; width: 22px; border-radius: 4px; }
   .slide-counter { text-align: center; font-size: 13px; color: #999; margin-top: 10px; }
   .card { width: 540px; height: 675px; position: relative; overflow: hidden; flex-shrink: 0; }
+
+  /* 배지 - 상단 중앙 pill */
   .badge {
-    display: inline-block; background: #F97316; color: #fff;
-    font-size: 11px; font-weight: 700; padding: 6px 15px; border-radius: 30px; letter-spacing: 1px;
+    display: inline-flex; align-items: center; gap: 8px;
+    background: #F97316; color: #fff;
+    font-size: 24px; font-weight: 700; padding: 16px 40px; border-radius: 60px; letter-spacing: 0.5px;
   }
-  .wm { position: absolute; z-index: 30; font-size: 12px; font-weight: 800; letter-spacing: 3px; }
-  .wm-dark { bottom: 22px; right: 24px; color: rgba(255,255,255,0.9); background: rgba(0,0,0,0.28); padding: 4px 10px; border-radius: 4px; }
-  .wm-light { top: 38px; right: 36px; color: #F97316; background: rgba(255,255,255,0.9); padding: 4px 10px; border-radius: 4px; }
+  .badge-sep { opacity: 0.65; font-weight: 400; }
+  .badge-wrap { position: absolute; top: 36px; left: 50%; transform: translateX(-50%); z-index: 10; white-space: nowrap; }
+
+  /* 워터마크 - 하단 중앙 */
+  .wm { position: absolute; z-index: 30; font-size: 13px; font-weight: 800; letter-spacing: 2px; white-space: nowrap; }
+  .wm-bottom {
+    bottom: 24px; left: 50%; transform: translateX(-50%);
+    color: #F97316; text-shadow: 0 1px 6px rgba(0,0,0,0.55);
+  }
+
   /* COVER */
   .card-cover { background: #111; }
   .cover-bg { position: absolute; inset: 0; background-size: cover; background-position: center; opacity: 0.55; }
-  .cover-grad { position: absolute; inset: 0; background: linear-gradient(to top, rgba(10,10,10,0.9) 0%, rgba(10,10,10,0.45) 55%, transparent 100%); }
-  .cover-body { position: absolute; bottom: 0; left: 0; right: 0; z-index: 5; padding: 0 36px 52px; }
-  .cover-body .badge { margin-bottom: 20px; }
-  .cover-body h1 { font-size: 50px; font-weight: 900; color: #fff; line-height: 1.18; margin-bottom: 14px; word-break: keep-all; }
-  .cover-body p { font-size: 14px; color: rgba(255,255,255,0.65); line-height: 1.65; word-break: keep-all; }
-  .cover-arrow { position: absolute; bottom: 36px; right: 36px; z-index: 5; color: rgba(255,255,255,0.7); font-size: 22px; font-weight: 700; letter-spacing: -2px; }
-  /* CH01 */
-  .card-ch01 { background: #fff; }
-  .ch01-top { padding: 40px 36px 24px; }
-  .ch01-top .badge { margin-bottom: 20px; }
-  .ch01-top h2 { font-size: 40px; font-weight: 900; color: #1a1a1a; line-height: 1.18; margin-bottom: 18px; word-break: keep-all; }
-  .ch01-top p { font-size: 14px; color: #555; line-height: 1.75; word-break: keep-all; }
-  .ch01-top .src { font-size: 11px; color: #bbb; margin-top: 14px; }
-  .ch01-img { position: absolute; bottom: 0; left: 0; right: 0; height: 300px; }
-  .ch01-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
-  .ch01-img::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 80px; background: linear-gradient(to bottom, white, transparent); z-index: 2; }
-  /* CH03 */
-  .card-ch03 { background: #111; }
-  .ch03-bg { position: absolute; inset: 0; background-size: cover; background-position: center; opacity: 0.5; }
-  .ch03-grad { position: absolute; inset: 0; background: linear-gradient(to top, rgba(5,5,5,0.92) 0%, rgba(5,5,5,0.5) 45%, rgba(0,0,0,0.1) 100%); }
-  .ch03-num { position: absolute; top: 38px; left: 36px; z-index: 5; }
-  .ch03-body { position: absolute; bottom: 0; left: 0; right: 0; z-index: 5; padding: 0 36px 52px; }
-  .ch03-body .badge { margin-bottom: 20px; }
-  .ch03-body h2 { font-size: 42px; font-weight: 900; color: #fff; line-height: 1.2; margin-bottom: 16px; word-break: keep-all; }
-  .ch03-body p { font-size: 14px; color: rgba(255,255,255,0.75); line-height: 1.75; word-break: keep-all; }
-  .ch03-body .src { font-size: 11px; color: rgba(255,255,255,0.32); margin-top: 14px; }
+  .cover-grad { position: absolute; inset: 0; background: linear-gradient(to top, rgba(10,10,10,0.95) 0%, rgba(10,10,10,0.45) 55%, transparent 100%); }
+  .cover-body { position: absolute; bottom: 0; left: 0; right: 0; z-index: 5; padding: 0 40px 80px; text-align: center; }
+  .cover-body h1 { font-size: 52px; font-weight: 900; color: #fff; line-height: 1.18; margin-bottom: 16px; word-break: keep-all; }
+  .cover-body p { font-size: 14px; color: rgba(255,255,255,0.6); line-height: 1.7; word-break: keep-all; }
+
+  /* ARTICLE - 전체 이미지 배경 */
+  .card-article { background: #111; }
+  .art-bg { position: absolute; inset: 0; background-size: cover; background-position: center; opacity: 0.5; }
+  .art-grad { position: absolute; inset: 0; background: linear-gradient(to top, rgba(5,5,5,0.97) 0%, rgba(5,5,5,0.6) 42%, rgba(0,0,0,0.1) 100%); }
+  .art-body { position: absolute; bottom: 0; left: 0; right: 0; z-index: 5; padding: 0 38px 72px; }
+  .art-body h2 { font-size: 40px; font-weight: 900; color: #fff; line-height: 1.22; margin-bottom: 16px; word-break: keep-all; }
+  .art-body p { font-size: 14px; color: rgba(255,255,255,0.78); line-height: 1.78; word-break: keep-all; }
+  .art-body .src { font-size: 11px; color: rgba(255,255,255,0.3); margin-top: 14px; }
+
   /* OUTRO */
   .card-outro { background: #111; }
-  .outro-bg { position: absolute; inset: 0; background-size: cover; background-position: center; opacity: 0.3; }
-  .outro-grad { position: absolute; inset: 0; background: rgba(10,10,10,0.72); }
+  .outro-bg { position: absolute; inset: 0; background-size: cover; background-position: center; opacity: 0.25; }
+  .outro-grad { position: absolute; inset: 0; background: rgba(10,10,10,0.78); }
   .outro-body { position: relative; z-index: 5; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 48px; text-align: center; }
-  .outro-logo { font-size: 40px; font-weight: 900; color: #F97316; letter-spacing: 6px; margin-bottom: 20px; }
-  .outro-line { width: 44px; height: 3px; background: #F97316; border-radius: 2px; margin: 0 auto 28px; }
-  .outro-body h2 { font-size: 26px; font-weight: 800; color: #fff; line-height: 1.45; word-break: keep-all; margin-bottom: 18px; }
-  .outro-body p { font-size: 14px; color: rgba(255,255,255,0.5); line-height: 1.8; word-break: keep-all; margin-bottom: 44px; }
+  .outro-logo { font-size: 42px; font-weight: 900; color: #F97316; letter-spacing: 4px; margin-bottom: 8px; }
+  .outro-sub { font-size: 13px; color: rgba(255,255,255,0.4); margin-bottom: 28px; letter-spacing: 1px; }
+  .outro-line { width: 44px; height: 3px; background: #F97316; border-radius: 2px; margin: 0 auto 32px; }
+  .outro-body h2 { font-size: 24px; font-weight: 800; color: #fff; line-height: 1.5; word-break: keep-all; margin-bottom: 16px; }
+  .outro-body p { font-size: 13px; color: rgba(255,255,255,0.45); line-height: 1.85; word-break: keep-all; margin-bottom: 40px; }
   .outro-tags { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
   .outro-tag { border: 1.5px solid rgba(249,115,22,0.45); color: rgba(249,115,22,0.85); font-size: 12px; font-weight: 600; padding: 6px 14px; border-radius: 20px; }
   .gen-info { font-size: 12px; color: #aaa; text-align: center; margin-top: 10px; }
@@ -298,53 +293,40 @@ JS = """
 
 def card_cover(cover_img, target_date):
     dt = datetime.strptime(target_date, "%Y-%m-%d")
-    date_str = dt.strftime("%Y년 %m월 %d일")
-    weekday  = ["월", "화", "수", "목", "금", "토", "일"][dt.weekday()]
+    date_short = dt.strftime("%y.%m.%d")
+    weekday = ["월", "화", "수", "목", "금", "토", "일"][dt.weekday()]
+    date_full = dt.strftime("%Y년 %m월 %d일")
     return f"""
       <div class="card card-cover">
         <div class="cover-bg" style="background-image:url('{escape(cover_img)}')"></div>
         <div class="cover-grad"></div>
+        <div class="badge-wrap">
+          <span class="badge">말레이시아 뉴스 <span class="badge-sep">|</span> {date_short}</span>
+        </div>
         <div class="cover-body">
-          <div class="badge">TODAY'S NEWS</div>
-          <h1>실시간<br>말레이시아 뉴스</h1>
-          <p>{date_str} ({weekday})<br>오늘의 말레이시아 주요 소식</p>
+          <h1>오늘의<br>말레이시아</h1>
+          <p>{date_full} ({weekday})<br>스와이프해서 주요 뉴스를 확인하세요 👉</p>
         </div>
-        <div class="cover-arrow">&rsaquo;&rsaquo;</div>
-        <span class="wm wm-light">한마당</span>
+        <span class="wm wm-bottom">🍊한마당</span>
       </div>"""
 
 
-def card_ch01(num, title, summary, img_url, url):
-    img_html = f'<img src="{escape(img_url)}" alt="" loading="lazy">' if img_url else \
-               f'<div style="width:100%;height:100%;background:#ddd"></div>'
-    source = get_source_name(url)
-    return f"""
-      <div class="card card-ch01">
-        <div class="ch01-top">
-          <div class="badge">CHAPTER {num:02d}</div>
-          <h2>{escape(title)}</h2>
-          <p>{escape(summary)}</p>
-          <div class="src">출처 : {escape(source)}</div>
-        </div>
-        <div class="ch01-img">{img_html}</div>
-        <span class="wm wm-light">한마당</span>
-      </div>"""
-
-
-def card_ch03(num, title, summary, img_url, url):
+def card_article(num, title, summary, img_url, url, date_short):
     bg = f"background-image:url('{escape(img_url)}')" if img_url else "background:#222"
     source = get_source_name(url)
     return f"""
-      <div class="card card-ch03">
-        <div class="ch03-bg" style="{bg}"></div>
-        <div class="ch03-grad"></div>
-        <div class="ch03-num"><span class="badge">CHAPTER {num:02d}</span></div>
-        <div class="ch03-body">
+      <div class="card card-article">
+        <div class="art-bg" style="{bg}"></div>
+        <div class="art-grad"></div>
+        <div class="badge-wrap">
+          <span class="badge">말레이시아 이슈 <span class="badge-sep">|</span> {date_short}</span>
+        </div>
+        <div class="art-body">
           <h2>{escape(title)}</h2>
           <p>{escape(summary)}</p>
           <div class="src">출처 : {escape(source)}</div>
         </div>
-        <span class="wm wm-light">한마당</span>
+        <span class="wm wm-bottom">🍊한마당</span>
       </div>"""
 
 
@@ -354,7 +336,8 @@ def card_outro(outro_img, target_date):
         <div class="outro-bg" style="background-image:url('{escape(outro_img)}')"></div>
         <div class="outro-grad"></div>
         <div class="outro-body">
-          <div class="outro-logo">한마당</div>
+          <div class="outro-logo">🍊한마당</div>
+          <div class="outro-sub">말레이시아 교민 뉴스 채널</div>
           <div class="outro-line"></div>
           <h2>더 많은 말레이시아 소식을<br>한마당에서 만나세요</h2>
           <p>매일 업데이트되는 말레이시아 실시간 뉴스<br>정치·경제·사회·문화를 한눈에</p>
@@ -365,7 +348,6 @@ def card_outro(outro_img, target_date):
             <span class="outro-tag">#{target_date.replace('-','')}</span>
           </div>
         </div>
-        <span class="wm wm-light">한마당</span>
       </div>"""
 
 
@@ -416,11 +398,9 @@ def export_images(html_path, total_cards, target_date):
             device_scale_factor=2,   # 2× → 1080×1350px
         )
         page.goto(f"file://{html_path}", wait_until="networkidle")
-        # 웹폰트 로딩 대기
         page.wait_for_timeout(1500)
 
         for i in range(total_cards):
-            # 해당 슬라이드로 이동
             page.evaluate(f"go({i})")
             page.wait_for_timeout(500)
 
@@ -451,7 +431,6 @@ def post_to_instagram(image_dir, target_date):
         print("⚠️  instagrapi가 설치되지 않았습니다. pip3 install instagrapi")
         return
 
-    # 이미지 목록 수집 (card_01.png ~ 순서대로)
     images = sorted(glob.glob(os.path.join(image_dir, "템플릿*.png")), key=lambda x: int(re.search(r'\d+', os.path.basename(x)).group()))
     if not images:
         print("⚠️  포스팅할 이미지가 없습니다.")
@@ -492,12 +471,11 @@ def post_to_instagram(image_dir, target_date):
         print("   신규 로그인 성공")
         return cl2
 
-    # 저장된 세션 로드 후 실제 인증 여부 검증, 실패 시 재로그인
     if os.path.exists(session_path):
         try:
             cl.load_settings(session_path)
             _login(cl)
-            cl.account_info()  # 실제 인증 검증
+            cl.account_info()
             cl.dump_settings(session_path)
             print("   세션 재사용 로그인 성공")
         except Exception as e:
@@ -536,7 +514,7 @@ def main():
     print(f"\n🖼  기사 이미지 크롤링 중 ({len(selected)}개)...")
     articles = []
     for i, row in enumerate(selected):
-        date_str = row[0][:10]   # YYYY-MM-DD
+        date_str = row[0][:10]
         cat      = row[1].strip()
         title_kr = row[3].strip()
         summary  = row[4].strip()
@@ -553,23 +531,22 @@ def main():
         })
 
     # 5. HTML 슬라이드 조립
+    dt = datetime.strptime(target_date, "%Y-%m-%d")
+    date_short = dt.strftime("%y.%m.%d")
+
     cover_img = articles[0]["img"] if articles else DEFAULT_FALLBACK
     outro_img = articles[-1]["img"] if articles else DEFAULT_FALLBACK
 
     slides = [card_cover(cover_img, target_date)]
 
     for i, art in enumerate(articles):
-        num = i + 1
-        if i % 2 == 0:
-            slides.append(card_ch01(num, art["title"], art["summary"], art["img"], art["url"]))
-        else:
-            slides.append(card_ch03(num, art["title"], art["summary"], art["img"], art["url"]))
+        slides.append(card_article(i + 1, art["title"], art["summary"], art["img"], art["url"], date_short))
 
     slides.append(card_outro(outro_img, target_date))
 
-    total      = len(slides)
-    gen_time   = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    html       = build_html("\n".join(slides), total, gen_time)
+    total    = len(slides)
+    gen_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    html     = build_html("\n".join(slides), total, gen_time)
 
     # 6. 파일 저장
     with open(OUTPUT, "w", encoding="utf-8") as f:
