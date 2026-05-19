@@ -415,23 +415,23 @@ def export_images(html_path, total_cards, target_date):
     return out_dir
 
 
-# ── 인스타그램 포스팅 ─────────────────────────────────
+# ── 인스타그램 Playwright 웹 자동화 포스팅 ──────────────
 def post_to_instagram(image_dir, target_date):
-    """instagrapi로 카드뉴스 이미지를 인스타그램 캐러셀로 업로드"""
-    username = os.environ.get("INSTAGRAM_USERNAME", "")
-    password = os.environ.get("INSTAGRAM_PASSWORD", "")
+    """Playwright로 Instagram 웹 브라우저를 통해 카드뉴스 캐러셀 업로드"""
+    from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
-    if not username or not password or username == "your_username":
-        print("⚠️  인스타그램 계정 정보가 .env에 설정되지 않았습니다. 포스팅을 건너뜁니다.")
+    username    = os.environ.get("INSTAGRAM_USERNAME", "")
+    password    = os.environ.get("INSTAGRAM_PASSWORD", "")
+    totp_secret = os.environ.get("INSTAGRAM_TOTP_SECRET", "").replace(" ", "")
+
+    if not username or not password:
+        print("⚠️  INSTAGRAM_USERNAME/PASSWORD가 없습니다. 포스팅을 건너뜁니다.")
         return
 
-    try:
-        from instagrapi import Client
-    except ImportError:
-        print("⚠️  instagrapi가 설치되지 않았습니다. pip3 install instagrapi")
-        return
-
-    images = sorted(glob.glob(os.path.join(image_dir, "템플릿*.png")), key=lambda x: int(re.search(r'\d+', os.path.basename(x)).group()))
+    images = sorted(
+        glob.glob(os.path.join(image_dir, "템플릿*.png")),
+        key=lambda x: int(re.search(r'\d+', os.path.basename(x)).group())
+    )
     if not images:
         print("⚠️  포스팅할 이미지가 없습니다.")
         return
@@ -439,8 +439,7 @@ def post_to_instagram(image_dir, target_date):
     dt = datetime.strptime(target_date, "%Y-%m-%d")
     date_str = dt.strftime("%Y년 %m월 %d일")
     weekday  = ["월", "화", "수", "목", "금", "토", "일"][dt.weekday()]
-
-    caption = (
+    caption  = (
         f"📰 {date_str} ({weekday}) 말레이시아 실시간 뉴스\n\n"
         "오늘의 말레이시아 주요 소식을 한마당이 전합니다.\n"
         "스와이프해서 더 많은 뉴스를 확인하세요 👉\n\n"
@@ -448,49 +447,130 @@ def post_to_instagram(image_dir, target_date):
         f"#{target_date.replace('-', '')} #해외뉴스 #카드뉴스"
     )
 
-    totp_secret = os.environ.get("INSTAGRAM_TOTP_SECRET", "").replace(" ", "")
+    def dismiss_popup(page, texts, timeout=3000):
+        for text in texts:
+            try:
+                btn = page.locator(f'button:has-text("{text}")').first
+                if btn.is_visible(timeout=timeout):
+                    btn.click()
+                    page.wait_for_timeout(1000)
+                    return
+            except PWTimeout:
+                pass
 
-    def _login(client):
-        if totp_secret:
-            import pyotp
-            code = pyotp.TOTP(totp_secret).now()
-            client.login(username, password, verification_code=code)
-        else:
-            client.login(username, password)
+    with sync_playwright() as p:
+        browser = p.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-dev-shm-usage"],
+        )
+        ctx = browser.new_context(
+            viewport={"width": 1280, "height": 900},
+            user_agent=(
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            locale="ko-KR",
+        )
+        page = ctx.new_page()
 
-    session_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "session.json")
+        # ── 1) 로그인 ──────────────────────────────────
+        print("\n🔐 Instagram 웹 로그인 중...")
+        page.goto("https://www.instagram.com/accounts/login/", wait_until="networkidle")
+        page.wait_for_selector('input[name="username"]', timeout=15000)
+        page.fill('input[name="username"]', username)
+        page.fill('input[name="password"]', password)
+        page.click('button[type="submit"]')
+        page.wait_for_timeout(4000)
 
-    cl = Client()
-    cl.delay_range = [1, 3]
-
-    def _fresh_login():
-        cl2 = Client()
-        cl2.delay_range = [1, 3]
-        _login(cl2)
-        cl2.dump_settings(session_path)
-        print("   신규 로그인 성공")
-        return cl2
-
-    if os.path.exists(session_path):
+        # TOTP 2FA
         try:
-            cl.load_settings(session_path)
-            _login(cl)
-            cl.account_info()
-            cl.dump_settings(session_path)
-            print("   세션 재사용 로그인 성공")
-        except Exception as e:
-            print(f"   세션 만료, 재로그인 중... ({e})")
-            cl = _fresh_login()
-    else:
-        cl = _fresh_login()
+            totp_input = page.locator('input[name="verificationCode"]')
+            if totp_input.is_visible(timeout=5000):
+                import pyotp
+                code = pyotp.TOTP(totp_secret).now()
+                print(f"   TOTP 코드 입력: {code}")
+                totp_input.fill(code)
+                page.locator('button[type="button"]:has-text("확인")').or_(
+                    page.locator('button[type="button"]:has-text("Confirm")')
+                ).first.click()
+                page.wait_for_timeout(3000)
+        except PWTimeout:
+            pass
 
-    print(f"\n📤 인스타그램 업로드 중... ({len(images)}장)")
-    if len(images) == 1:
-        media = cl.photo_upload(images[0], caption=caption)
-    else:
-        media = cl.album_upload(images, caption=caption)
+        # 팝업 닫기 (저장/알림)
+        dismiss_popup(page, ["나중에", "Not Now", "나중에 하기"])
+        page.wait_for_timeout(1000)
+        dismiss_popup(page, ["나중에", "Not Now"])
+        page.wait_for_timeout(1000)
 
-    print(f"   ✅ 업로드 완료! media_id={media.id}")
+        print("   로그인 완료")
+
+        # ── 2) 새 게시물 만들기 버튼 클릭 ──────────────
+        print("\n✏️  게시물 만들기...")
+        create_btn = (
+            page.locator('[aria-label="새로운 게시물"]')
+            .or_(page.locator('[aria-label="New post"]'))
+        )
+        create_btn.click(timeout=15000)
+        page.wait_for_timeout(1500)
+
+        # ── 3) 파일 업로드 ─────────────────────────────
+        print(f"   이미지 {len(images)}장 업로드 중...")
+        with page.expect_file_chooser() as fc_info:
+            page.locator('text="컴퓨터에서 선택"').or_(
+                page.locator('text="Select from computer"')
+            ).click(timeout=10000)
+        file_chooser = fc_info.value
+        file_chooser.set_files(images)
+        page.wait_for_timeout(3000)
+
+        # 여러 장일 때 "여러 항목 선택" 모달 처리
+        try:
+            ok_btn = page.locator('button:has-text("확인")').or_(
+                page.locator('button:has-text("OK")')
+            ).first
+            if ok_btn.is_visible(timeout=3000):
+                ok_btn.click()
+                page.wait_for_timeout(1500)
+        except PWTimeout:
+            pass
+
+        # ── 4) Next → Next → 캡션 입력 → Share ─────────
+        # 자르기(Crop) 단계
+        _click_next(page)
+        # 필터(Filter) 단계
+        _click_next(page)
+        # 캡션 단계
+        print("   캡션 입력 중...")
+        cap_area = page.locator('[aria-label="문구를 입력하세요..."]').or_(
+            page.locator('[aria-label="Write a caption..."]')
+        )
+        cap_area.click(timeout=10000)
+        cap_area.fill(caption)
+        page.wait_for_timeout(1000)
+
+        # 공유(Share) 클릭
+        page.locator('button:has-text("공유하기")').or_(
+            page.locator('button:has-text("Share")')
+        ).first.click(timeout=10000)
+        page.wait_for_timeout(5000)
+
+        print("   ✅ 인스타그램 업로드 완료!")
+        browser.close()
+
+
+def _click_next(page):
+    from playwright.sync_api import TimeoutError as PWTimeout
+    for label in ["다음", "Next"]:
+        try:
+            btn = page.locator(f'button:has-text("{label}")').last
+            if btn.is_visible(timeout=5000):
+                btn.click()
+                page.wait_for_timeout(2000)
+                return
+        except PWTimeout:
+            pass
 
 
 # ── 메인 ──────────────────────────────────────────────
