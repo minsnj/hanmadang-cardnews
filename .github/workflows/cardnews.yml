@@ -20,7 +20,7 @@ jobs:
 
       - name: 의존성 설치
         run: |
-          pip install instagrapi pyotp anthropic playwright
+          pip install pyotp anthropic playwright
           python3 -m playwright install --with-deps chromium
 
       - name: .env 파일 생성
@@ -29,6 +29,7 @@ jobs:
           INSTAGRAM_USERNAME=${{ secrets.INSTAGRAM_USERNAME }}
           INSTAGRAM_PASSWORD=${{ secrets.INSTAGRAM_PASSWORD }}
           INSTAGRAM_TOTP_SECRET=${{ secrets.INSTAGRAM_TOTP_SECRET }}
+          ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
           EOF
 
       - name: 카드뉴스 생성 및 포스팅
