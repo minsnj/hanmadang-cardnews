@@ -16,6 +16,7 @@ import sys
 import glob
 import urllib.request
 import urllib.error
+import urllib.parse
 from datetime import date, datetime
 from html import escape
 try:
@@ -415,88 +416,58 @@ def export_images(html_path, total_cards, target_date):
     return out_dir
 
 
-# ── 인스타그램 세션 저장 (로컬 실행 전용) ────────────────
-def save_instagram_session():
-    """로컬에서 브라우저를 열어 수동 로그인 후 세션(쿠키)을 저장한다.
-    저장된 파일을 base64로 인코딩해서 GitHub Secret에 등록하면
-    Actions에서 로그인 없이 세션을 재사용할 수 있다.
-    """
-    import base64, json
-    from playwright.sync_api import sync_playwright
+# ── 이미지 GitHub Release 업로드 ──────────────────────
+def upload_to_github_release(image_dir, target_date):
+    """이미지를 GitHub Release에 업로드하고 공개 URL 목록 반환"""
+    import subprocess, shutil
 
-    session_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ig_session.json")
-
-    print("\n🔐 Instagram 세션 저장 모드")
-    print("   브라우저가 열리면 Instagram에 직접 로그인하세요.")
-    print("   로그인 완료 후 피드 화면이 나오면 자동으로 저장됩니다.\n")
-
-    with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=False,
-            args=["--disable-blink-features=AutomationControlled"],
-        )
-        ctx = browser.new_context(
-            viewport={"width": 1280, "height": 900},
-            user_agent=(
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
-            ),
-        )
-        ctx.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-        page = ctx.new_page()
-        page.goto("https://www.instagram.com/accounts/login/")
-
-        # 로그인 완료 대기: /accounts/login/ 에서 벗어날 때까지
-        print("   로그인 대기 중... (최대 3분)")
-        try:
-            page.wait_for_url(
-                lambda url: "accounts/login" not in url and "instagram.com" in url,
-                timeout=180000,
-            )
-        except Exception:
-            print("   ⚠️  시간 초과. 현재 상태로 저장합니다.")
-
-        page.wait_for_timeout(2000)
-        ctx.storage_state(path=session_path)
-        browser.close()
-
-    # base64 인코딩 출력
-    with open(session_path, "rb") as f:
-        encoded = base64.b64encode(f.read()).decode()
-
-    print(f"\n✅ 세션 저장 완료: {session_path}")
-    print("\n📋 GitHub Secret 등록 방법:")
-    print("   1. 아래 base64 값을 복사하세요:")
-    print(f"\n{encoded}\n")
-    print("   2. GitHub 저장소 → Settings → Secrets → Actions")
-    print("   3. 'INSTAGRAM_SESSION' 이름으로 위 값을 붙여넣기")
-    print("   4. cardnews.yml의 .env 생성 단계에 다음을 추가:")
-    print("      INSTAGRAM_SESSION=${{ secrets.INSTAGRAM_SESSION }}")
-
-
-# ── 인스타그램 Playwright 웹 자동화 포스팅 ──────────────
-def post_to_instagram(image_dir, target_date):
-    """Playwright로 Instagram 웹 브라우저를 통해 카드뉴스 캐러셀 업로드"""
-    from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
-
-    username    = os.environ.get("INSTAGRAM_USERNAME", "")
-    password    = os.environ.get("INSTAGRAM_PASSWORD", "")
-    totp_secret = os.environ.get("INSTAGRAM_TOTP_SECRET", "").replace(" ", "")
-
-    if not username or not password:
-        print("⚠️  INSTAGRAM_USERNAME/PASSWORD가 없습니다. 포스팅을 건너뜁니다.")
-        return
+    repo = os.environ.get("GITHUB_REPOSITORY", "minsnj/hanmadang-cardnews")
+    tag  = f"cardnews-{target_date}"
 
     images = sorted(
         glob.glob(os.path.join(image_dir, "템플릿*.png")),
         key=lambda x: int(re.search(r'\d+', os.path.basename(x)).group())
     )
     if not images:
-        print("⚠️  포스팅할 이미지가 없습니다.")
+        raise RuntimeError("업로드할 이미지가 없습니다.")
+
+    # URL-safe 파일명으로 복사 (card01.png, card02.png, ...)
+    safe_paths = []
+    for i, src in enumerate(images):
+        dst = os.path.join(image_dir, f"card{i+1:02d}.png")
+        shutil.copy2(src, dst)
+        safe_paths.append(dst)
+
+    # 기존 release 삭제 후 재생성 (재실행 대비)
+    subprocess.run(["gh", "release", "delete", tag, "--yes", "--repo", repo],
+                   capture_output=True)
+
+    subprocess.run([
+        "gh", "release", "create", tag, *safe_paths,
+        "--title", f"카드뉴스 {target_date}",
+        "--notes", "자동 생성",
+        "--repo", repo,
+    ], check=True)
+
+    base = f"https://github.com/{repo}/releases/download/{tag}"
+    urls = [f"{base}/card{i+1:02d}.png" for i in range(len(safe_paths))]
+    print(f"   {len(urls)}개 이미지 업로드 완료")
+    return urls
+
+
+# ── Instagram Graph API 포스팅 ─────────────────────────
+def post_via_graph_api(image_dir, target_date):
+    """Instagram Graph API로 캐러셀 포스팅"""
+    import json, time as _time
+
+    access_token = os.environ.get("INSTAGRAM_ACCESS_TOKEN", "")
+    user_id      = os.environ.get("INSTAGRAM_USER_ID", "")
+
+    if not access_token or not user_id:
+        print("⚠️  INSTAGRAM_ACCESS_TOKEN / INSTAGRAM_USER_ID가 없습니다. 포스팅을 건너뜁니다.")
         return
 
-    dt = datetime.strptime(target_date, "%Y-%m-%d")
+    dt       = datetime.strptime(target_date, "%Y-%m-%d")
     date_str = dt.strftime("%Y년 %m월 %d일")
     weekday  = ["월", "화", "수", "목", "금", "토", "일"][dt.weekday()]
     caption  = (
@@ -507,213 +478,52 @@ def post_to_instagram(image_dir, target_date):
         f"#{target_date.replace('-', '')} #해외뉴스 #카드뉴스"
     )
 
-    def dismiss_popup(page, texts, timeout=3000):
-        for text in texts:
-            try:
-                btn = page.locator(f'button:has-text("{text}")').first
-                if btn.is_visible(timeout=timeout):
-                    btn.click()
-                    page.wait_for_timeout(1000)
-                    return
-            except PWTimeout:
-                pass
-
-    import base64, tempfile
-
-    session_b64  = os.environ.get("INSTAGRAM_SESSION", "")
-    session_file = None
-
-    if session_b64:
-        # 저장된 세션 복원
-        tmp = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
-        tmp.write(base64.b64decode(session_b64))
-        tmp.close()
-        session_file = tmp.name
-        print("\n🔐 저장된 Instagram 세션으로 로그인 복원 중...")
-    else:
-        print("\n🔐 Instagram 웹 로그인 중... (세션 없음)")
-
-    with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
-            args=[
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-blink-features=AutomationControlled",
-                "--disable-infobars",
-                "--window-size=1280,900",
-            ],
-        )
-        ctx_kwargs = dict(
-            viewport={"width": 1280, "height": 900},
-            user_agent=(
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
-            ),
-            locale="ko-KR",
-            extra_http_headers={"Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8"},
-        )
-        if session_file:
-            ctx_kwargs["storage_state"] = session_file
-        ctx = browser.new_context(**ctx_kwargs)
-        ctx.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-        page = ctx.new_page()
-
+    def ig_post(path, data):
+        url  = f"https://graph.instagram.com/v21.0{path}"
+        data["access_token"] = access_token
+        body = urllib.parse.urlencode(data).encode()
+        req  = urllib.request.Request(url, data=body, method="POST")
         try:
-            if session_file:
-                # ── 1a) 세션 복원: 직접 피드 이동 ────────────
-                page.goto("https://www.instagram.com/", wait_until="domcontentloaded", timeout=30000)
-                page.wait_for_timeout(3000)
-                dismiss_popup(page, ["모두 허용", "Allow all cookies", "수락", "Accept all"], timeout=5000)
-                page.wait_for_timeout(1000)
+            with urllib.request.urlopen(req) as r:
+                return json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            raise RuntimeError(f"Graph API 오류 ({e.code}): {e.read().decode()}")
 
-                # 로그인 페이지로 리다이렉트됐으면 세션 만료
-                if "accounts/login" in page.url:
-                    raise Exception("세션이 만료되었습니다. --save-session으로 세션을 다시 저장하세요.")
-                print(f"   세션 복원 완료 | URL: {page.url}")
+    # 1. 이미지 GitHub Release에 업로드
+    print("\n📤 이미지 업로드 중...")
+    image_urls = upload_to_github_release(image_dir, target_date)
+    _time.sleep(5)  # Release 전파 대기
 
-            else:
-                # ── 1b) 일반 로그인 ───────────────────────────
-                page.goto("https://www.instagram.com/", wait_until="domcontentloaded")
-                page.wait_for_timeout(3000)
-                dismiss_popup(page, ["모두 허용", "Allow all cookies", "수락", "Accept all"], timeout=5000)
-                page.wait_for_timeout(1000)
+    # 2. 이미지 컨테이너 생성
+    print(f"\n📸 이미지 컨테이너 생성 중 ({len(image_urls)}개)...")
+    container_ids = []
+    for i, img_url in enumerate(image_urls):
+        res = ig_post(f"/{user_id}/media", {
+            "image_url":        img_url,
+            "is_carousel_item": "true",
+        })
+        container_ids.append(res["id"])
+        print(f"   [{i+1}/{len(image_urls)}] {res['id']}")
+        _time.sleep(1)
 
-                page.goto("https://www.instagram.com/accounts/login/", wait_until="networkidle", timeout=30000)
-                page.wait_for_timeout(3000)
+    # 3. 캐러셀 컨테이너 생성
+    print("\n🎠 캐러셀 컨테이너 생성 중...")
+    carousel = ig_post(f"/{user_id}/media", {
+        "media_type": "CAROUSEL",
+        "children":   ",".join(container_ids),
+        "caption":    caption,
+    })
+    print(f"   캐러셀 ID: {carousel['id']}")
 
-                page.evaluate(f"""() => {{
-                    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-                    const email = document.querySelector('input[name="email"]') || document.querySelectorAll('input')[0];
-                    const pw    = document.querySelector('input[name="pass"]')  || document.querySelector('input[type="password"]');
-                    if (email) {{ setter.call(email, {repr(username)}); email.dispatchEvent(new Event('input', {{bubbles:true}})); email.dispatchEvent(new Event('change', {{bubbles:true}})); }}
-                    if (pw)    {{ setter.call(pw,    {repr(password)}); pw.dispatchEvent(new Event('input', {{bubbles:true}})); pw.dispatchEvent(new Event('change', {{bubbles:true}})); }}
-                }}""")
-                page.wait_for_timeout(1500)
-
-                submitted = page.evaluate("""() => {
-                    const s = document.querySelector('input[type="submit"]') || document.querySelector('button[type="submit"]');
-                    if (s) { s.click(); return true; }
-                    return false;
-                }""")
-                if not submitted:
-                    page.keyboard.press("Enter")
-                page.wait_for_timeout(4000)
-                print(f"   폼 제출 완료 | URL: {page.url}")
-                page.wait_for_timeout(4000)
-
-                # TOTP 2FA
-                try:
-                    totp_input = page.locator('input[name="verificationCode"]')
-                    if totp_input.is_visible(timeout=5000):
-                        import pyotp
-                        code = pyotp.TOTP(totp_secret).now()
-                        print(f"   TOTP 코드 입력: {code}")
-                        totp_input.fill(code)
-                        page.locator('button[type="button"]:has-text("확인")').or_(
-                            page.locator('button[type="button"]:has-text("Confirm")')
-                        ).first.click()
-                        page.wait_for_timeout(3000)
-                except PWTimeout:
-                    pass
-
-                dismiss_popup(page, ["나중에", "Not Now", "나중에 하기"])
-                page.wait_for_timeout(1000)
-                dismiss_popup(page, ["나중에", "Not Now"])
-                page.wait_for_timeout(1000)
-
-                print("   로그인 완료")
-
-            # 공통: 팝업 닫기
-            dismiss_popup(page, ["나중에", "Not Now", "나중에 하기"])
-            page.wait_for_timeout(1000)
-
-            # ── 2) 새 게시물 만들기 버튼 클릭 ──────────────
-            print("\n✏️  게시물 만들기...")
-            create_btn = (
-                page.locator('[aria-label="새로운 게시물"]')
-                .or_(page.locator('[aria-label="New post"]'))
-            )
-            create_btn.click(timeout=15000)
-            page.wait_for_timeout(1500)
-
-            # ── 3) 파일 업로드 ─────────────────────────────
-            print(f"   이미지 {len(images)}장 업로드 중...")
-            with page.expect_file_chooser() as fc_info:
-                page.locator('text="컴퓨터에서 선택"').or_(
-                    page.locator('text="Select from computer"')
-                ).click(timeout=10000)
-            file_chooser = fc_info.value
-            file_chooser.set_files(images)
-            page.wait_for_timeout(3000)
-
-            # 여러 장일 때 "여러 항목 선택" 모달 처리
-            try:
-                ok_btn = page.locator('button:has-text("확인")').or_(
-                    page.locator('button:has-text("OK")')
-                ).first
-                if ok_btn.is_visible(timeout=3000):
-                    ok_btn.click()
-                    page.wait_for_timeout(1500)
-            except PWTimeout:
-                pass
-
-            # ── 4) 자르기 → 필터 → 캡션 → 공유 ───────────
-            _click_next(page)  # 자르기 단계
-            _click_next(page)  # 필터 단계
-
-            print("   캡션 입력 중...")
-            cap_area = page.locator('[aria-label="문구를 입력하세요..."]').or_(
-                page.locator('[aria-label="Write a caption..."]')
-            )
-            cap_area.click(timeout=10000)
-            cap_area.fill(caption)
-            page.wait_for_timeout(1000)
-
-            page.locator('button:has-text("공유하기")').or_(
-                page.locator('button:has-text("Share")')
-            ).first.click(timeout=10000)
-            page.wait_for_timeout(5000)
-
-            print("   ✅ 인스타그램 업로드 완료!")
-
-        except Exception as e:
-            ss_path = os.path.join(image_dir, "debug_screenshot.png")
-            try:
-                page.screenshot(path=ss_path, full_page=True)
-                print(f"   🔍 디버그 스크린샷 저장: {ss_path}")
-            except Exception:
-                pass
-            raise e
-        finally:
-            browser.close()
-            if session_file:
-                try:
-                    os.unlink(session_file)
-                except Exception:
-                    pass
-
-
-def _click_next(page):
-    from playwright.sync_api import TimeoutError as PWTimeout
-    for label in ["다음", "Next"]:
-        try:
-            btn = page.locator(f'button:has-text("{label}")').last
-            if btn.is_visible(timeout=5000):
-                btn.click()
-                page.wait_for_timeout(2000)
-                return
-        except PWTimeout:
-            pass
+    # 4. 게시
+    _time.sleep(5)
+    print("\n🚀 게시 중...")
+    result = ig_post(f"/{user_id}/media_publish", {"creation_id": carousel["id"]})
+    print(f"   ✅ 게시 완료! 게시물 ID: {result['id']}")
 
 
 # ── 메인 ──────────────────────────────────────────────
 def main():
-    if len(sys.argv) > 1 and sys.argv[1] == "--save-session":
-        save_instagram_session()
-        return
-
     target_date = sys.argv[1] if len(sys.argv) > 1 else date.today().strftime("%Y-%m-%d")
     print(f"\n🗓  대상 날짜: {target_date}")
 
@@ -779,7 +589,7 @@ def main():
     image_dir = export_images(OUTPUT, total, target_date)
 
     # 인스타그램 자동 포스팅
-    post_to_instagram(image_dir, target_date)
+    post_via_graph_api(image_dir, target_date)
 
 
 if __name__ == "__main__":
