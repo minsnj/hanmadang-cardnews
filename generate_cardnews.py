@@ -515,19 +515,29 @@ def post_to_instagram(image_dir, target_date):
                 # input이 있으면 JavaScript로 직접 값 주입 (visibility 무관)
                 page.evaluate(f"""() => {{
                     const inputs = document.querySelectorAll('input');
+                    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
                     if (inputs[0]) {{
-                        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-                        nativeInputValueSetter.call(inputs[0], '{username}');
+                        setter.call(inputs[0], {repr(username)});
                         inputs[0].dispatchEvent(new Event('input', {{ bubbles: true }}));
+                        inputs[0].dispatchEvent(new Event('change', {{ bubbles: true }}));
                     }}
                     if (inputs[1]) {{
-                        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-                        nativeInputValueSetter.call(inputs[1], '{password}');
+                        setter.call(inputs[1], {repr(password)});
                         inputs[1].dispatchEvent(new Event('input', {{ bubbles: true }}));
+                        inputs[1].dispatchEvent(new Event('change', {{ bubbles: true }}));
                     }}
                 }}""")
-                page.wait_for_timeout(1000)
-                page.locator('button[type="submit"]').click()
+                page.wait_for_timeout(1500)
+
+                # 제출 버튼 클릭 (JS 우선, 실패 시 Enter 키)
+                submitted = page.evaluate("""() => {
+                    const btn = document.querySelector('button[type="submit"]');
+                    if (btn) { btn.click(); return true; }
+                    return false;
+                }""")
+                if not submitted:
+                    page.keyboard.press("Enter")
+                print("   폼 제출 완료")
             page.wait_for_timeout(4000)
 
             # TOTP 2FA
