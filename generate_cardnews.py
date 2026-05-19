@@ -415,6 +415,66 @@ def export_images(html_path, total_cards, target_date):
     return out_dir
 
 
+# ── 인스타그램 세션 저장 (로컬 실행 전용) ────────────────
+def save_instagram_session():
+    """로컬에서 브라우저를 열어 수동 로그인 후 세션(쿠키)을 저장한다.
+    저장된 파일을 base64로 인코딩해서 GitHub Secret에 등록하면
+    Actions에서 로그인 없이 세션을 재사용할 수 있다.
+    """
+    import base64, json
+    from playwright.sync_api import sync_playwright
+
+    session_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ig_session.json")
+
+    print("\n🔐 Instagram 세션 저장 모드")
+    print("   브라우저가 열리면 Instagram에 직접 로그인하세요.")
+    print("   로그인 완료 후 피드 화면이 나오면 자동으로 저장됩니다.\n")
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(
+            headless=False,
+            args=["--disable-blink-features=AutomationControlled"],
+        )
+        ctx = browser.new_context(
+            viewport={"width": 1280, "height": 900},
+            user_agent=(
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+        )
+        ctx.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        page = ctx.new_page()
+        page.goto("https://www.instagram.com/accounts/login/")
+
+        # 로그인 완료 대기: /accounts/login/ 에서 벗어날 때까지
+        print("   로그인 대기 중... (최대 3분)")
+        try:
+            page.wait_for_url(
+                lambda url: "accounts/login" not in url and "instagram.com" in url,
+                timeout=180000,
+            )
+        except Exception:
+            print("   ⚠️  시간 초과. 현재 상태로 저장합니다.")
+
+        page.wait_for_timeout(2000)
+        ctx.storage_state(path=session_path)
+        browser.close()
+
+    # base64 인코딩 출력
+    with open(session_path, "rb") as f:
+        encoded = base64.b64encode(f.read()).decode()
+
+    print(f"\n✅ 세션 저장 완료: {session_path}")
+    print("\n📋 GitHub Secret 등록 방법:")
+    print("   1. 아래 base64 값을 복사하세요:")
+    print(f"\n{encoded}\n")
+    print("   2. GitHub 저장소 → Settings → Secrets → Actions")
+    print("   3. 'INSTAGRAM_SESSION' 이름으로 위 값을 붙여넣기")
+    print("   4. cardnews.yml의 .env 생성 단계에 다음을 추가:")
+    print("      INSTAGRAM_SESSION=${{ secrets.INSTAGRAM_SESSION }}")
+
+
 # ── 인스타그램 Playwright 웹 자동화 포스팅 ──────────────
 def post_to_instagram(image_dir, target_date):
     """Playwright로 Instagram 웹 브라우저를 통해 카드뉴스 캐러셀 업로드"""
@@ -458,6 +518,21 @@ def post_to_instagram(image_dir, target_date):
             except PWTimeout:
                 pass
 
+    import base64, tempfile
+
+    session_b64  = os.environ.get("INSTAGRAM_SESSION", "")
+    session_file = None
+
+    if session_b64:
+        # 저장된 세션 복원
+        tmp = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
+        tmp.write(base64.b64decode(session_b64))
+        tmp.close()
+        session_file = tmp.name
+        print("\n🔐 저장된 Instagram 세션으로 로그인 복원 중...")
+    else:
+        print("\n🔐 Instagram 웹 로그인 중... (세션 없음)")
+
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
@@ -469,7 +544,7 @@ def post_to_instagram(image_dir, target_date):
                 "--window-size=1280,900",
             ],
         )
-        ctx = browser.new_context(
+        ctx_kwargs = dict(
             viewport={"width": 1280, "height": 900},
             user_agent=(
                 "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -479,89 +554,80 @@ def post_to_instagram(image_dir, target_date):
             locale="ko-KR",
             extra_http_headers={"Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8"},
         )
+        if session_file:
+            ctx_kwargs["storage_state"] = session_file
+        ctx = browser.new_context(**ctx_kwargs)
         ctx.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         page = ctx.new_page()
 
         try:
-            # ── 1) 로그인 ──────────────────────────────────
-            print("\n🔐 Instagram 웹 로그인 중...")
-            page.goto("https://www.instagram.com/", wait_until="domcontentloaded")
-            page.wait_for_timeout(3000)
+            if session_file:
+                # ── 1a) 세션 복원: 직접 피드 이동 ────────────
+                page.goto("https://www.instagram.com/", wait_until="domcontentloaded", timeout=30000)
+                page.wait_for_timeout(3000)
+                dismiss_popup(page, ["모두 허용", "Allow all cookies", "수락", "Accept all"], timeout=5000)
+                page.wait_for_timeout(1000)
 
-            # 쿠키 동의 팝업 처리
-            dismiss_popup(page, ["모두 허용", "Allow all cookies", "수락", "Accept all"], timeout=5000)
-            page.wait_for_timeout(1000)
+                # 로그인 페이지로 리다이렉트됐으면 세션 만료
+                if "accounts/login" in page.url:
+                    raise Exception("세션이 만료되었습니다. --save-session으로 세션을 다시 저장하세요.")
+                print(f"   세션 복원 완료 | URL: {page.url}")
 
-            # 로그인 페이지로 직접 이동 (networkidle로 JS 렌더링 완료 대기)
-            page.goto("https://www.instagram.com/accounts/login/", wait_until="networkidle", timeout=30000)
-            page.wait_for_timeout(3000)
-
-            # 디버그: 페이지 구조 확인
-            input_count = page.evaluate("document.querySelectorAll('input').length")
-            print(f"   [디버그] input 요소 수: {input_count}")
-            print(f"   [디버그] 현재 URL: {page.url}")
-
-            if input_count == 0:
-                # input이 없으면 JavaScript로 직접 값 설정 시도
-                print("   [디버그] input 없음 — JS로 직접 입력 시도")
-                page.evaluate(f"""() => {{
-                    const allInputs = document.querySelectorAll('input, [contenteditable]');
-                    console.log('all inputs:', allInputs.length);
-                }}""")
-                # 페이지 소스 일부 저장
-                html_snippet = page.evaluate("document.body.innerHTML.slice(0, 2000)")
-                print(f"   [디버그] HTML: {html_snippet[:500]}")
             else:
-                # input이 있으면 JavaScript로 직접 값 주입 (visibility 무관)
+                # ── 1b) 일반 로그인 ───────────────────────────
+                page.goto("https://www.instagram.com/", wait_until="domcontentloaded")
+                page.wait_for_timeout(3000)
+                dismiss_popup(page, ["모두 허용", "Allow all cookies", "수락", "Accept all"], timeout=5000)
+                page.wait_for_timeout(1000)
+
+                page.goto("https://www.instagram.com/accounts/login/", wait_until="networkidle", timeout=30000)
+                page.wait_for_timeout(3000)
+
                 page.evaluate(f"""() => {{
-                    const inputs = document.querySelectorAll('input');
                     const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-                    if (inputs[0]) {{
-                        setter.call(inputs[0], {repr(username)});
-                        inputs[0].dispatchEvent(new Event('input', {{ bubbles: true }}));
-                        inputs[0].dispatchEvent(new Event('change', {{ bubbles: true }}));
-                    }}
-                    if (inputs[1]) {{
-                        setter.call(inputs[1], {repr(password)});
-                        inputs[1].dispatchEvent(new Event('input', {{ bubbles: true }}));
-                        inputs[1].dispatchEvent(new Event('change', {{ bubbles: true }}));
-                    }}
+                    const email = document.querySelector('input[name="email"]') || document.querySelectorAll('input')[0];
+                    const pw    = document.querySelector('input[name="pass"]')  || document.querySelector('input[type="password"]');
+                    if (email) {{ setter.call(email, {repr(username)}); email.dispatchEvent(new Event('input', {{bubbles:true}})); email.dispatchEvent(new Event('change', {{bubbles:true}})); }}
+                    if (pw)    {{ setter.call(pw,    {repr(password)}); pw.dispatchEvent(new Event('input', {{bubbles:true}})); pw.dispatchEvent(new Event('change', {{bubbles:true}})); }}
                 }}""")
                 page.wait_for_timeout(1500)
 
-                # 제출 버튼 클릭 (JS 우선, 실패 시 Enter 키)
                 submitted = page.evaluate("""() => {
-                    const btn = document.querySelector('button[type="submit"]');
-                    if (btn) { btn.click(); return true; }
+                    const s = document.querySelector('input[type="submit"]') || document.querySelector('button[type="submit"]');
+                    if (s) { s.click(); return true; }
                     return false;
                 }""")
                 if not submitted:
                     page.keyboard.press("Enter")
-                print("   폼 제출 완료")
-            page.wait_for_timeout(4000)
+                page.wait_for_timeout(4000)
+                print(f"   폼 제출 완료 | URL: {page.url}")
+                page.wait_for_timeout(4000)
 
-            # TOTP 2FA
-            try:
-                totp_input = page.locator('input[name="verificationCode"]')
-                if totp_input.is_visible(timeout=5000):
-                    import pyotp
-                    code = pyotp.TOTP(totp_secret).now()
-                    print(f"   TOTP 코드 입력: {code}")
-                    totp_input.fill(code)
-                    page.locator('button[type="button"]:has-text("확인")').or_(
-                        page.locator('button[type="button"]:has-text("Confirm")')
-                    ).first.click()
-                    page.wait_for_timeout(3000)
-            except PWTimeout:
-                pass
+                # TOTP 2FA
+                try:
+                    totp_input = page.locator('input[name="verificationCode"]')
+                    if totp_input.is_visible(timeout=5000):
+                        import pyotp
+                        code = pyotp.TOTP(totp_secret).now()
+                        print(f"   TOTP 코드 입력: {code}")
+                        totp_input.fill(code)
+                        page.locator('button[type="button"]:has-text("확인")').or_(
+                            page.locator('button[type="button"]:has-text("Confirm")')
+                        ).first.click()
+                        page.wait_for_timeout(3000)
+                except PWTimeout:
+                    pass
 
-            # 팝업 닫기 (저장/알림)
+                dismiss_popup(page, ["나중에", "Not Now", "나중에 하기"])
+                page.wait_for_timeout(1000)
+                dismiss_popup(page, ["나중에", "Not Now"])
+                page.wait_for_timeout(1000)
+
+                print("   로그인 완료")
+
+            # 공통: 팝업 닫기
             dismiss_popup(page, ["나중에", "Not Now", "나중에 하기"])
             page.wait_for_timeout(1000)
-            dismiss_popup(page, ["나중에", "Not Now"])
-            page.wait_for_timeout(1000)
-
-            print("   로그인 완료")
 
             # ── 2) 새 게시물 만들기 버튼 클릭 ──────────────
             print("\n✏️  게시물 만들기...")
@@ -622,6 +688,11 @@ def post_to_instagram(image_dir, target_date):
             raise e
         finally:
             browser.close()
+            if session_file:
+                try:
+                    os.unlink(session_file)
+                except Exception:
+                    pass
 
 
 def _click_next(page):
@@ -639,6 +710,10 @@ def _click_next(page):
 
 # ── 메인 ──────────────────────────────────────────────
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "--save-session":
+        save_instagram_session()
+        return
+
     target_date = sys.argv[1] if len(sys.argv) > 1 else date.today().strftime("%Y-%m-%d")
     print(f"\n🗓  대상 날짜: {target_date}")
 
