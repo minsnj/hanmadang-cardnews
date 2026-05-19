@@ -492,17 +492,42 @@ def post_to_instagram(image_dir, target_date):
             dismiss_popup(page, ["모두 허용", "Allow all cookies", "수락", "Accept all"], timeout=5000)
             page.wait_for_timeout(1000)
 
-            # 로그인 페이지로 직접 이동
-            if "accounts/login" not in page.url:
-                page.goto("https://www.instagram.com/accounts/login/", wait_until="domcontentloaded")
-                page.wait_for_timeout(3000)
+            # 로그인 페이지로 직접 이동 (networkidle로 JS 렌더링 완료 대기)
+            page.goto("https://www.instagram.com/accounts/login/", wait_until="networkidle", timeout=30000)
+            page.wait_for_timeout(3000)
 
-            # 첫 번째 input(username) / 두 번째 input(password) 로 직접 접근
-            inputs = page.locator("input")
-            inputs.first.wait_for(state="visible", timeout=20000)
-            inputs.nth(0).fill(username)
-            inputs.nth(1).fill(password)
-            page.locator('button[type="submit"]').click()
+            # 디버그: 페이지 구조 확인
+            input_count = page.evaluate("document.querySelectorAll('input').length")
+            print(f"   [디버그] input 요소 수: {input_count}")
+            print(f"   [디버그] 현재 URL: {page.url}")
+
+            if input_count == 0:
+                # input이 없으면 JavaScript로 직접 값 설정 시도
+                print("   [디버그] input 없음 — JS로 직접 입력 시도")
+                page.evaluate(f"""() => {{
+                    const allInputs = document.querySelectorAll('input, [contenteditable]');
+                    console.log('all inputs:', allInputs.length);
+                }}""")
+                # 페이지 소스 일부 저장
+                html_snippet = page.evaluate("document.body.innerHTML.slice(0, 2000)")
+                print(f"   [디버그] HTML: {html_snippet[:500]}")
+            else:
+                # input이 있으면 JavaScript로 직접 값 주입 (visibility 무관)
+                page.evaluate(f"""() => {{
+                    const inputs = document.querySelectorAll('input');
+                    if (inputs[0]) {{
+                        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                        nativeInputValueSetter.call(inputs[0], '{username}');
+                        inputs[0].dispatchEvent(new Event('input', {{ bubbles: true }}));
+                    }}
+                    if (inputs[1]) {{
+                        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                        nativeInputValueSetter.call(inputs[1], '{password}');
+                        inputs[1].dispatchEvent(new Event('input', {{ bubbles: true }}));
+                    }}
+                }}""")
+                page.wait_for_timeout(1000)
+                page.locator('button[type="submit"]').click()
             page.wait_for_timeout(4000)
 
             # TOTP 2FA
