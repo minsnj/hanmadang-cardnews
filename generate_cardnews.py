@@ -503,10 +503,24 @@ def post_to_instagram(image_dir, target_date):
             except PWTimeout:
                 pass
 
-            page.wait_for_selector('input[name="username"]', timeout=20000)
-            page.fill('input[name="username"]', username)
-            page.fill('input[name="password"]', password)
-            page.click('button[type="submit"]')
+            # 로그인 입력 필드 (Instagram은 name 속성 대신 aria-label 또는 placeholder 사용)
+            user_input = page.locator(
+                'input[name="username"], '
+                'input[aria-label*="사용자"], '
+                'input[aria-label*="username"], '
+                'input[placeholder*="사용자"], '
+                'input[placeholder*="username"], '
+                'input[placeholder*="phone"]'
+            ).first
+            user_input.wait_for(state="visible", timeout=20000)
+            user_input.fill(username)
+
+            pw_input = page.locator(
+                'input[name="password"], '
+                'input[type="password"]'
+            ).first
+            pw_input.fill(password)
+            page.locator('button[type="submit"]').click()
             page.wait_for_timeout(4000)
 
             # TOTP 2FA
