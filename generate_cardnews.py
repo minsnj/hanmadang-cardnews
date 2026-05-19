@@ -461,7 +461,13 @@ def post_to_instagram(image_dir, target_date):
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
-            args=["--no-sandbox", "--disable-dev-shm-usage"],
+            args=[
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-blink-features=AutomationControlled",
+                "--disable-infobars",
+                "--window-size=1280,900",
+            ],
         )
         ctx = browser.new_context(
             viewport={"width": 1280, "height": 900},
@@ -471,93 +477,120 @@ def post_to_instagram(image_dir, target_date):
                 "Chrome/124.0.0.0 Safari/537.36"
             ),
             locale="ko-KR",
+            extra_http_headers={"Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8"},
         )
+        ctx.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         page = ctx.new_page()
 
-        # ── 1) 로그인 ──────────────────────────────────
-        print("\n🔐 Instagram 웹 로그인 중...")
-        page.goto("https://www.instagram.com/accounts/login/", wait_until="networkidle")
-        page.wait_for_selector('input[name="username"]', timeout=15000)
-        page.fill('input[name="username"]', username)
-        page.fill('input[name="password"]', password)
-        page.click('button[type="submit"]')
-        page.wait_for_timeout(4000)
-
-        # TOTP 2FA
         try:
-            totp_input = page.locator('input[name="verificationCode"]')
-            if totp_input.is_visible(timeout=5000):
-                import pyotp
-                code = pyotp.TOTP(totp_secret).now()
-                print(f"   TOTP 코드 입력: {code}")
-                totp_input.fill(code)
-                page.locator('button[type="button"]:has-text("확인")').or_(
-                    page.locator('button[type="button"]:has-text("Confirm")')
-                ).first.click()
-                page.wait_for_timeout(3000)
-        except PWTimeout:
-            pass
+            # ── 1) 로그인 ──────────────────────────────────
+            print("\n🔐 Instagram 웹 로그인 중...")
+            page.goto("https://www.instagram.com/", wait_until="domcontentloaded")
+            page.wait_for_timeout(3000)
 
-        # 팝업 닫기 (저장/알림)
-        dismiss_popup(page, ["나중에", "Not Now", "나중에 하기"])
-        page.wait_for_timeout(1000)
-        dismiss_popup(page, ["나중에", "Not Now"])
-        page.wait_for_timeout(1000)
+            # 쿠키 동의 팝업 처리
+            dismiss_popup(page, ["모두 허용", "Allow all cookies", "수락", "Accept all"], timeout=5000)
+            page.wait_for_timeout(1000)
 
-        print("   로그인 완료")
+            # 로그인 링크 클릭 (메인 페이지에서)
+            try:
+                login_link = page.locator('a[href="/accounts/login/"]').or_(
+                    page.locator('text="로그인"')
+                ).first
+                if login_link.is_visible(timeout=3000):
+                    login_link.click()
+                    page.wait_for_timeout(2000)
+            except PWTimeout:
+                pass
 
-        # ── 2) 새 게시물 만들기 버튼 클릭 ──────────────
-        print("\n✏️  게시물 만들기...")
-        create_btn = (
-            page.locator('[aria-label="새로운 게시물"]')
-            .or_(page.locator('[aria-label="New post"]'))
-        )
-        create_btn.click(timeout=15000)
-        page.wait_for_timeout(1500)
+            page.wait_for_selector('input[name="username"]', timeout=20000)
+            page.fill('input[name="username"]', username)
+            page.fill('input[name="password"]', password)
+            page.click('button[type="submit"]')
+            page.wait_for_timeout(4000)
 
-        # ── 3) 파일 업로드 ─────────────────────────────
-        print(f"   이미지 {len(images)}장 업로드 중...")
-        with page.expect_file_chooser() as fc_info:
-            page.locator('text="컴퓨터에서 선택"').or_(
-                page.locator('text="Select from computer"')
-            ).click(timeout=10000)
-        file_chooser = fc_info.value
-        file_chooser.set_files(images)
-        page.wait_for_timeout(3000)
+            # TOTP 2FA
+            try:
+                totp_input = page.locator('input[name="verificationCode"]')
+                if totp_input.is_visible(timeout=5000):
+                    import pyotp
+                    code = pyotp.TOTP(totp_secret).now()
+                    print(f"   TOTP 코드 입력: {code}")
+                    totp_input.fill(code)
+                    page.locator('button[type="button"]:has-text("확인")').or_(
+                        page.locator('button[type="button"]:has-text("Confirm")')
+                    ).first.click()
+                    page.wait_for_timeout(3000)
+            except PWTimeout:
+                pass
 
-        # 여러 장일 때 "여러 항목 선택" 모달 처리
-        try:
-            ok_btn = page.locator('button:has-text("확인")').or_(
-                page.locator('button:has-text("OK")')
-            ).first
-            if ok_btn.is_visible(timeout=3000):
-                ok_btn.click()
-                page.wait_for_timeout(1500)
-        except PWTimeout:
-            pass
+            # 팝업 닫기 (저장/알림)
+            dismiss_popup(page, ["나중에", "Not Now", "나중에 하기"])
+            page.wait_for_timeout(1000)
+            dismiss_popup(page, ["나중에", "Not Now"])
+            page.wait_for_timeout(1000)
 
-        # ── 4) Next → Next → 캡션 입력 → Share ─────────
-        # 자르기(Crop) 단계
-        _click_next(page)
-        # 필터(Filter) 단계
-        _click_next(page)
-        # 캡션 단계
-        print("   캡션 입력 중...")
-        cap_area = page.locator('[aria-label="문구를 입력하세요..."]').or_(
-            page.locator('[aria-label="Write a caption..."]')
-        )
-        cap_area.click(timeout=10000)
-        cap_area.fill(caption)
-        page.wait_for_timeout(1000)
+            print("   로그인 완료")
 
-        # 공유(Share) 클릭
-        page.locator('button:has-text("공유하기")').or_(
-            page.locator('button:has-text("Share")')
-        ).first.click(timeout=10000)
-        page.wait_for_timeout(5000)
+            # ── 2) 새 게시물 만들기 버튼 클릭 ──────────────
+            print("\n✏️  게시물 만들기...")
+            create_btn = (
+                page.locator('[aria-label="새로운 게시물"]')
+                .or_(page.locator('[aria-label="New post"]'))
+            )
+            create_btn.click(timeout=15000)
+            page.wait_for_timeout(1500)
 
-        print("   ✅ 인스타그램 업로드 완료!")
-        browser.close()
+            # ── 3) 파일 업로드 ─────────────────────────────
+            print(f"   이미지 {len(images)}장 업로드 중...")
+            with page.expect_file_chooser() as fc_info:
+                page.locator('text="컴퓨터에서 선택"').or_(
+                    page.locator('text="Select from computer"')
+                ).click(timeout=10000)
+            file_chooser = fc_info.value
+            file_chooser.set_files(images)
+            page.wait_for_timeout(3000)
+
+            # 여러 장일 때 "여러 항목 선택" 모달 처리
+            try:
+                ok_btn = page.locator('button:has-text("확인")').or_(
+                    page.locator('button:has-text("OK")')
+                ).first
+                if ok_btn.is_visible(timeout=3000):
+                    ok_btn.click()
+                    page.wait_for_timeout(1500)
+            except PWTimeout:
+                pass
+
+            # ── 4) 자르기 → 필터 → 캡션 → 공유 ───────────
+            _click_next(page)  # 자르기 단계
+            _click_next(page)  # 필터 단계
+
+            print("   캡션 입력 중...")
+            cap_area = page.locator('[aria-label="문구를 입력하세요..."]').or_(
+                page.locator('[aria-label="Write a caption..."]')
+            )
+            cap_area.click(timeout=10000)
+            cap_area.fill(caption)
+            page.wait_for_timeout(1000)
+
+            page.locator('button:has-text("공유하기")').or_(
+                page.locator('button:has-text("Share")')
+            ).first.click(timeout=10000)
+            page.wait_for_timeout(5000)
+
+            print("   ✅ 인스타그램 업로드 완료!")
+
+        except Exception as e:
+            ss_path = os.path.join(image_dir, "debug_screenshot.png")
+            try:
+                page.screenshot(path=ss_path, full_page=True)
+                print(f"   🔍 디버그 스크린샷 저장: {ss_path}")
+            except Exception:
+                pass
+            raise e
+        finally:
+            browser.close()
 
 
 def _click_next(page):
