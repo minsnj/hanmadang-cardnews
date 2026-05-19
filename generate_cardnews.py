@@ -492,34 +492,16 @@ def post_to_instagram(image_dir, target_date):
             dismiss_popup(page, ["모두 허용", "Allow all cookies", "수락", "Accept all"], timeout=5000)
             page.wait_for_timeout(1000)
 
-            # 로그인 링크 클릭 (메인 페이지에서)
-            try:
-                login_link = page.locator('a[href="/accounts/login/"]').or_(
-                    page.locator('text="로그인"')
-                ).first
-                if login_link.is_visible(timeout=3000):
-                    login_link.click()
-                    page.wait_for_timeout(2000)
-            except PWTimeout:
-                pass
+            # 로그인 페이지로 직접 이동
+            if "accounts/login" not in page.url:
+                page.goto("https://www.instagram.com/accounts/login/", wait_until="domcontentloaded")
+                page.wait_for_timeout(3000)
 
-            # 로그인 입력 필드 (Instagram은 name 속성 대신 aria-label 또는 placeholder 사용)
-            user_input = page.locator(
-                'input[name="username"], '
-                'input[aria-label*="사용자"], '
-                'input[aria-label*="username"], '
-                'input[placeholder*="사용자"], '
-                'input[placeholder*="username"], '
-                'input[placeholder*="phone"]'
-            ).first
-            user_input.wait_for(state="visible", timeout=20000)
-            user_input.fill(username)
-
-            pw_input = page.locator(
-                'input[name="password"], '
-                'input[type="password"]'
-            ).first
-            pw_input.fill(password)
+            # 첫 번째 input(username) / 두 번째 input(password) 로 직접 접근
+            inputs = page.locator("input")
+            inputs.first.wait_for(state="visible", timeout=20000)
+            inputs.nth(0).fill(username)
+            inputs.nth(1).fill(password)
             page.locator('button[type="submit"]').click()
             page.wait_for_timeout(4000)
 
