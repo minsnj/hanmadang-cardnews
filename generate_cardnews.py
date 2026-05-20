@@ -456,6 +456,34 @@ def upload_to_github_release(image_dir, target_date):
 
 
 # ── Instagram Graph API 포스팅 ─────────────────────────
+def refresh_instagram_token(access_token):
+    """토큰 갱신 후 GitHub Secret 업데이트. 실패해도 기존 토큰으로 계속 진행."""
+    import json, subprocess
+    try:
+        url = f"https://graph.instagram.com/refresh_access_token?grant_type=ig_refresh_token&access_token={access_token}"
+        with urllib.request.urlopen(url) as r:
+            data = json.loads(r.read())
+        new_token = data.get("access_token", "")
+        if not new_token:
+            print("⚠️  토큰 갱신 응답에 access_token이 없습니다.")
+            return access_token
+        repo = os.environ.get("GITHUB_REPOSITORY", "")
+        if repo:
+            result = subprocess.run(
+                ["gh", "secret", "set", "INSTAGRAM_ACCESS_TOKEN", "--body", new_token, "--repo", repo],
+                capture_output=True, text=True,
+                env={**os.environ, "GH_TOKEN": os.environ.get("GH_PAT", os.environ.get("GH_TOKEN", ""))}
+            )
+            if result.returncode == 0:
+                print("   ✅ 토큰 갱신 및 Secret 업데이트 완료")
+            else:
+                print(f"   ⚠️  Secret 업데이트 실패 (포스팅은 계속): {result.stderr.strip()}")
+        return new_token
+    except Exception as e:
+        print(f"⚠️  토큰 갱신 실패 (포스팅은 계속): {e}")
+        return access_token
+
+
 def post_via_graph_api(image_dir, target_date):
     """Instagram Graph API로 캐러셀 포스팅"""
     import json, time as _time
@@ -466,6 +494,9 @@ def post_via_graph_api(image_dir, target_date):
     if not access_token or not user_id:
         print("⚠️  INSTAGRAM_ACCESS_TOKEN / INSTAGRAM_USER_ID가 없습니다. 포스팅을 건너뜁니다.")
         return
+
+    print("\n🔄 토큰 갱신 중...")
+    access_token = refresh_instagram_token(access_token)
 
     dt       = datetime.strptime(target_date, "%Y-%m-%d")
     date_str = dt.strftime("%Y년 %m월 %d일")
