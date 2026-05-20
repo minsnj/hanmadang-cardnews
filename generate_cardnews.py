@@ -220,7 +220,7 @@ CSS = """
   .badge-wrap { position: absolute; top: 36px; left: 50%; transform: translateX(-50%); z-index: 10; white-space: nowrap; }
 
   /* 워터마크 - 하단 중앙 */
-  .wm { position: absolute; z-index: 30; font-size: 13px; font-weight: 800; letter-spacing: 2px; white-space: nowrap; }
+  .wm { position: absolute; z-index: 30; font-size: 26px; font-weight: 800; letter-spacing: 2px; white-space: nowrap; }
   .wm-bottom {
     bottom: 24px; left: 50%; transform: translateX(-50%);
     color: #F97316; text-shadow: 0 1px 6px rgba(0,0,0,0.55);
@@ -230,7 +230,7 @@ CSS = """
   .card-cover { background: #111; }
   .cover-bg { position: absolute; inset: 0; background-size: cover; background-position: center; opacity: 0.55; }
   .cover-grad { position: absolute; inset: 0; background: linear-gradient(to top, rgba(10,10,10,0.95) 0%, rgba(10,10,10,0.45) 55%, transparent 100%); }
-  .cover-body { position: absolute; bottom: 0; left: 0; right: 0; z-index: 5; padding: 0 40px 80px; text-align: center; }
+  .cover-body { position: absolute; top: 50%; left: 0; right: 0; z-index: 5; padding: 0 40px; text-align: center; transform: translateY(-50%); }
   .cover-body h1 { font-size: 52px; font-weight: 900; color: #fff; line-height: 1.18; margin-bottom: 16px; word-break: keep-all; }
   .cover-body p { font-size: 14px; color: rgba(255,255,255,0.6); line-height: 1.7; word-break: keep-all; }
 
