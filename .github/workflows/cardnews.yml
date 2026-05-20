@@ -38,6 +38,7 @@ jobs:
         run: python3 generate_cardnews.py
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_PAT: ${{ secrets.GH_PAT }}
 
       - name: 생성된 이미지 업로드 (아카이브)
         uses: actions/upload-artifact@v4
