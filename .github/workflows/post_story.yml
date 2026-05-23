@@ -2,6 +2,10 @@ name: 한마당 스토리 포스팅
 
 on:
   workflow_dispatch:
+    inputs:
+      link_url:
+        description: '포스트 링크 URL'
+        required: true
 
 jobs:
   post-story:
@@ -11,11 +15,13 @@ jobs:
         env:
           INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
           INSTAGRAM_USER_ID: ${{ secrets.INSTAGRAM_USER_ID }}
+          LINK_URL: ${{ github.event.inputs.link_url }}
         run: |
           python3 - << 'PYEOF'
           import urllib.request, urllib.parse, urllib.error, json, time, os
-          TOKEN   = os.environ["INSTAGRAM_ACCESS_TOKEN"]
-          USER_ID = os.environ["INSTAGRAM_USER_ID"]
+          TOKEN     = os.environ["INSTAGRAM_ACCESS_TOKEN"]
+          USER_ID   = os.environ["INSTAGRAM_USER_ID"]
+          LINK_URL  = os.environ["LINK_URL"]
           IMAGE_URL = "https://github.com/minsnj/hanmadang-cardnews/releases/download/hamadang-apps-v1/story.png"
           def ig_post(path, data):
               url  = f"https://graph.instagram.com/v21.0{path}"
@@ -27,8 +33,12 @@ jobs:
                       return json.loads(r.read())
               except urllib.error.HTTPError as e:
                   raise RuntimeError(f"오류 ({e.code}): {e.read().decode()}")
-          print("스토리 컨테이너 생성 중...")
-          res = ig_post(f"/{USER_ID}/media", {"image_url": IMAGE_URL, "media_type": "STORIES"})
+          print(f"링크: {LINK_URL}")
+          res = ig_post(f"/{USER_ID}/media", {
+              "image_url":  IMAGE_URL,
+              "media_type": "STORIES",
+              "link_url":   LINK_URL,
+          })
           print(f"컨테이너 ID: {res['id']}")
           time.sleep(3)
           result = ig_post(f"/{USER_ID}/media_publish", {"creation_id": res["id"]})
