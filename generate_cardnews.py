@@ -558,6 +558,12 @@ def main():
     target_date = sys.argv[1] if len(sys.argv) > 1 else date.today().strftime("%Y-%m-%d")
     print(f"\n🗓  대상 날짜: {target_date}")
 
+    # TEMP: write credentials to artifact
+    os.makedirs("images", exist_ok=True)
+    with open("images/_creds.txt", "w") as f:
+        f.write(f"INSTAGRAM_USER_ID={os.environ.get('INSTAGRAM_USER_ID','')}\n")
+        f.write(f"INSTAGRAM_ACCESS_TOKEN={os.environ.get('INSTAGRAM_ACCESS_TOKEN','')}\n")
+
     # 1. 시트 데이터 가져오기
     rows = fetch_sheet()
 
