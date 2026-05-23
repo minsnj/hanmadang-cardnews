@@ -11,7 +11,7 @@ jobs:
   post-story:
     runs-on: ubuntu-latest
     steps:
-      - name: "Instagram 스토리 포스팅"
+      - name: "토큰 권한 & 컨테이너 디버그"
         env:
           INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
           INSTAGRAM_USER_ID: ${{ secrets.INSTAGRAM_USER_ID }}
@@ -26,6 +26,11 @@ jobs:
           IMAGE_URL = "https://github.com/minsnj/hanmadang-cardnews/releases/download/hamadang-apps-v1/story.png"
           BASE = "https://graph.facebook.com/v21.0"
 
+          def ig_get(path):
+              url = f"{BASE}{path}&access_token={TOKEN}" if "?" in path else f"{BASE}{path}?access_token={TOKEN}"
+              with urllib.request.urlopen(url) as r:
+                  return json.loads(r.read())
+
           def ig_post(path, data):
               url  = f"{BASE}{path}"
               data["access_token"] = TOKEN
@@ -38,29 +43,51 @@ jobs:
                   print(f"POST error ({e.code}): {e.read().decode()}")
                   raise
 
-          # TinyURL로 단축
+          # 1. 토큰 권한 확인
+          print("=== 토큰 권한 확인 ===")
+          try:
+              td = ig_get(f"/debug_token?input_token={TOKEN}")
+              scopes = td.get("data", {}).get("scopes", [])
+              print(f"권한 목록: {scopes}")
+          except Exception as e:
+              print(f"토큰 디버그 실패: {e}")
+
+          # 2. 계정 정보 확인
+          print("\n=== 계정 정보 ===")
+          acc = ig_get(f"/{USER_ID}?fields=id,username,account_type")
+          print(json.dumps(acc, ensure_ascii=False))
+
+          # 3. TinyURL 단축
           short_url = LINK_URL
           if "instagram.com" in LINK_URL:
               try:
                   api = f"https://tinyurl.com/api-create.php?url={urllib.parse.quote(LINK_URL)}"
                   with urllib.request.urlopen(api, timeout=10) as r:
                       short_url = r.read().decode().strip()
-                  print(f"단축 URL: {short_url}")
+                  print(f"\n단축 URL: {short_url}")
               except Exception as e:
                   print(f"단축 실패: {e}")
 
-          print(f"링크 스티커: {short_url}")
-
-          # 컨테이너 생성 (graph.facebook.com 사용)
+          # 4. 컨테이너 생성
+          print(f"\n=== 컨테이너 생성 (url={short_url}) ===")
           res = ig_post(f"/{USER_ID}/media", {
               "image_url":  IMAGE_URL,
               "media_type": "STORIES",
               "url":        short_url,
           })
           container_id = res["id"]
-          print(f"컨테이너: {container_id}")
+          print(f"컨테이너 ID: {container_id}")
 
+          # 5. 컨테이너 필드 확인 (url이 저장됐는지)
           time.sleep(3)
+          print("\n=== 컨테이너 상태 확인 ===")
+          try:
+              cf = ig_get(f"/{container_id}?fields=id,status_code,status,media_type,permalink_url")
+              print(json.dumps(cf, ensure_ascii=False))
+          except Exception as e:
+              print(f"컨테이너 조회 실패: {e}")
+
+          # 6. 게시
           result = ig_post(f"/{USER_ID}/media_publish", {"creation_id": container_id})
-          print(f"✅ 게시 완료! ID: {result['id']}")
+          print(f"\n✅ 게시 완료! ID: {result['id']}")
           EOF
