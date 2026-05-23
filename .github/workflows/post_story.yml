@@ -24,17 +24,7 @@ jobs:
           USER_ID  = os.environ["INSTAGRAM_USER_ID"]
           LINK_URL = os.environ["LINK_URL"]
           IMAGE_URL = "https://github.com/minsnj/hanmadang-cardnews/releases/download/hamadang-apps-v1/story.png"
-          BASE = "https://graph.facebook.com/v21.0"
-
-          def ig_get(path):
-              sep = "&" if "?" in path else "?"
-              url = f"{BASE}{path}{sep}access_token={TOKEN}"
-              try:
-                  with urllib.request.urlopen(url) as r:
-                      return json.loads(r.read())
-              except urllib.error.HTTPError as e:
-                  print(f"GET error ({e.code}): {e.read().decode()}")
-                  return {}
+          BASE = "https://graph.instagram.com/v21.0"
 
           def ig_post(path, data):
               url  = f"{BASE}{path}"
@@ -48,7 +38,7 @@ jobs:
                   print(f"POST error ({e.code}): {e.read().decode()}")
                   raise
 
-          # TinyURL로 단축
+          # TinyURL로 단축 (instagram.com URL인 경우)
           short_url = LINK_URL
           if "instagram.com" in LINK_URL:
               try:
@@ -57,7 +47,9 @@ jobs:
                       short_url = r.read().decode().strip()
                   print(f"단축 URL: {short_url}")
               except Exception as e:
-                  print(f"단축 실패: {e}")
+                  print(f"단축 실패, 원본 사용: {e}")
+
+          print(f"링크 스티커 URL: {short_url}")
 
           # 컨테이너 생성
           res = ig_post(f"/{USER_ID}/media", {
@@ -66,19 +58,9 @@ jobs:
               "url":        short_url,
           })
           container_id = res["id"]
-          print(f"컨테이너 생성: {container_id}")
+          print(f"컨테이너: {container_id}")
 
-          # 컨테이너 상태 확인 (url 필드 포함)
-          time.sleep(5)
-          cf = ig_get(f"/{container_id}?fields=id,status_code,status")
-          print(f"컨테이너 상태: {json.dumps(cf)}")
-
-          # 게시
+          time.sleep(3)
           result = ig_post(f"/{USER_ID}/media_publish", {"creation_id": container_id})
           print(f"✅ 게시 완료! ID: {result['id']}")
-
-          # 게시된 미디어 확인
-          time.sleep(3)
-          media = ig_get(f"/{result['id']}?fields=id,media_type,timestamp,permalink")
-          print(f"게시 미디어 정보: {json.dumps(media)}")
           EOF
