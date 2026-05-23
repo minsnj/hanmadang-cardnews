@@ -4,14 +4,14 @@ on:
   workflow_dispatch:
     inputs:
       link_url:
-        description: '포스트 링크 URL (인스타그램 포스트 주소)'
+        description: '포스트 링크 URL'
         required: true
 
 jobs:
   post-story:
     runs-on: ubuntu-latest
     steps:
-      - name: Instagram 스토리 포스팅
+      - name: Instagram 스토리 포스팅 (디버그)
         env:
           INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
           INSTAGRAM_USER_ID: ${{ secrets.INSTAGRAM_USER_ID }}
@@ -20,9 +20,9 @@ jobs:
           python3 - << 'PYEOF'
           import urllib.request, urllib.parse, urllib.error, json, time, os
 
-          TOKEN     = os.environ["INSTAGRAM_ACCESS_TOKEN"]
-          USER_ID   = os.environ["INSTAGRAM_USER_ID"]
-          LINK_URL  = os.environ["LINK_URL"]
+          TOKEN    = os.environ["INSTAGRAM_ACCESS_TOKEN"]
+          USER_ID  = os.environ["INSTAGRAM_USER_ID"]
+          LINK_URL = os.environ["LINK_URL"]
           IMAGE_URL = "https://github.com/minsnj/hanmadang-cardnews/releases/download/hamadang-apps-v1/story.png"
 
           def ig_post(path, data):
@@ -34,23 +34,51 @@ jobs:
                   with urllib.request.urlopen(req) as r:
                       return json.loads(r.read())
               except urllib.error.HTTPError as e:
-                  print(f"API 오류 ({e.code}): {e.read().decode()}")
+                  print(f"POST 오류 ({e.code}): {e.read().decode()}")
                   raise
 
-          # instagram.com URL → TinyURL 단축 (링크 스티커가 외부 URL에만 작동)
+          def ig_get(path, fields=""):
+              qs_data = {"access_token": TOKEN}
+              if fields:
+                  qs_data["fields"] = fields
+              qs = urllib.parse.urlencode(qs_data)
+              url = f"https://graph.instagram.com/v21.0{path}?{qs}"
+              try:
+                  with urllib.request.urlopen(url) as r:
+                      return json.loads(r.read())
+              except urllib.error.HTTPError as e:
+                  print(f"GET 오류 ({e.code}): {e.read().decode()}")
+                  return {}
+
+          # 1. 토큰 스코프 확인
+          print("=== 토큰 권한 확인 ===")
+          token_info = ig_get(f"/me", "id,name,instagram_pro_account")
+          print(f"토큰 me: {json.dumps(token_info)}")
+
+          # Facebook Graph API로 토큰 스코프 확인
+          try:
+              qs = urllib.parse.urlencode({"input_token": TOKEN, "access_token": TOKEN})
+              url = f"https://graph.facebook.com/v21.0/debug_token?{qs}"
+              with urllib.request.urlopen(url) as r:
+                  debug = json.loads(r.read())
+              scopes = debug.get("data", {}).get("scopes", [])
+              print(f"토큰 스코프: {scopes}")
+          except Exception as e:
+              print(f"토큰 디버그 실패: {e}")
+
+          # 2. 컨테이너 생성
+          print("
+=== 컨테이너 생성 ===")
           short_url = LINK_URL
           if "instagram.com" in LINK_URL:
               try:
-                  tinyurl_api = f"https://tinyurl.com/api-create.php?url={urllib.parse.quote(LINK_URL)}"
-                  with urllib.request.urlopen(tinyurl_api, timeout=10) as r:
+                  api = f"https://tinyurl.com/api-create.php?url={urllib.parse.quote(LINK_URL)}"
+                  with urllib.request.urlopen(api, timeout=10) as r:
                       short_url = r.read().decode().strip()
                   print(f"단축 URL: {short_url}")
               except Exception as e:
-                  print(f"단축 실패, 원본 URL 사용: {e}")
+                  print(f"단축 실패: {e}")
 
-          print(f"링크 스티커 URL: {short_url}")
-
-          # 컨테이너 생성
           res = ig_post(f"/{USER_ID}/media", {
               "image_url":  IMAGE_URL,
               "media_type": "STORIES",
@@ -59,8 +87,20 @@ jobs:
           container_id = res["id"]
           print(f"컨테이너 ID: {container_id}")
 
-          # 게시
-          time.sleep(3)
+          # 3. 컨테이너에 url 필드가 저장됐는지 확인
+          time.sleep(2)
+          print("
+=== 컨테이너 상세 조회 ===")
+          container_info = ig_get(f"/{container_id}", "id,status_code,status")
+          print(f"컨테이너 정보: {json.dumps(container_info)}")
+
+          # url 필드 별도 조회 시도
+          container_url = ig_get(f"/{container_id}", "id,url")
+          print(f"컨테이너 url 필드: {json.dumps(container_url)}")
+
+          # 4. 게시
+          print("
+=== 게시 ===")
           result = ig_post(f"/{USER_ID}/media_publish", {"creation_id": container_id})
-          print(f"✅ 스토리 게시 완료! ID: {result['id']}")
+          print(f"✅ 게시 완료! ID: {result['id']}")
           PYEOF
