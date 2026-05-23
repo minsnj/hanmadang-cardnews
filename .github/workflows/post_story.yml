@@ -11,7 +11,7 @@ jobs:
   post-story:
     runs-on: ubuntu-latest
     steps:
-      - name: "Instagram 스토리 포스팅 디버그"
+      - name: "Instagram 스토리 포스팅"
         env:
           INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
           INSTAGRAM_USER_ID: ${{ secrets.INSTAGRAM_USER_ID }}
@@ -25,8 +25,8 @@ jobs:
           LINK_URL = os.environ["LINK_URL"]
           IMAGE_URL = "https://github.com/minsnj/hanmadang-cardnews/releases/download/hamadang-apps-v1/story.png"
 
-          def ig_post(path, data):
-              url  = f"https://graph.instagram.com/v21.0{path}"
+          def api_post(base, path, data):
+              url  = f"{base}/v21.0{path}"
               data["access_token"] = TOKEN
               body = urllib.parse.urlencode(data).encode()
               req  = urllib.request.Request(url, data=body, method="POST")
@@ -37,18 +37,7 @@ jobs:
                   print(f"POST error ({e.code}): {e.read().decode()}")
                   raise
 
-          # 1. Token scopes via Facebook debug_token
-          print("=== Token debug ===")
-          try:
-              qs = urllib.parse.urlencode({"input_token": TOKEN, "access_token": TOKEN})
-              req2 = urllib.request.Request(f"https://graph.facebook.com/v21.0/debug_token?{qs}")
-              with urllib.request.urlopen(req2) as r:
-                  debug = json.loads(r.read())
-              print(f"Scopes: {debug.get('data',{}).get('scopes', [])}")
-          except Exception as e:
-              print(f"Token debug failed: {e}")
-
-          # 2. Shorten instagram URL
+          # Shorten instagram URL
           short_url = LINK_URL
           if "instagram.com" in LINK_URL:
               try:
@@ -59,19 +48,35 @@ jobs:
               except Exception as e:
                   print(f"Shorten failed: {e}")
 
-          print(f"Link sticker URL: {short_url}")
+          # Try 1: graph.instagram.com
+          print("=== Try 1: graph.instagram.com ===")
+          try:
+              res = api_post("https://graph.instagram.com", f"/{USER_ID}/media", {
+                  "image_url":  IMAGE_URL,
+                  "media_type": "STORIES",
+                  "url":        short_url,
+              })
+              cid = res["id"]
+              print(f"Container: {cid}")
+              time.sleep(3)
+              result = api_post("https://graph.instagram.com", f"/{USER_ID}/media_publish", {"creation_id": cid})
+              print(f"Published: {result['id']}")
+          except Exception as e:
+              print(f"Try 1 failed: {e}")
 
-          # 3. Create container with url
-          res = ig_post(f"/{USER_ID}/media", {
-              "image_url":  IMAGE_URL,
-              "media_type": "STORIES",
-              "url":        short_url,
-          })
-          container_id = res["id"]
-          print(f"Container ID: {container_id}")
-
-          # 4. Publish
-          time.sleep(3)
-          result = ig_post(f"/{USER_ID}/media_publish", {"creation_id": container_id})
-          print(f"Published ID: {result['id']}")
+              # Try 2: graph.facebook.com
+              print("=== Try 2: graph.facebook.com ===")
+              try:
+                  res2 = api_post("https://graph.facebook.com", f"/{USER_ID}/media", {
+                      "image_url":  IMAGE_URL,
+                      "media_type": "STORIES",
+                      "url":        short_url,
+                  })
+                  cid2 = res2["id"]
+                  print(f"Container: {cid2}")
+                  time.sleep(3)
+                  result2 = api_post("https://graph.facebook.com", f"/{USER_ID}/media_publish", {"creation_id": cid2})
+                  print(f"Published: {result2['id']}")
+              except Exception as e2:
+                  print(f"Try 2 failed: {e2}")
           EOF
