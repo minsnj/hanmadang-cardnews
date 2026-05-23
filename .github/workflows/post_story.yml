@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       link_url:
-        description: '포스트 링크 URL'
+        description: '포스트 링크 URL (인스타그램 포스트 주소)'
         required: true
 
 jobs:
@@ -19,6 +19,7 @@ jobs:
         run: |
           python3 - << 'PYEOF'
           import urllib.request, urllib.parse, urllib.error, json, time, os
+
           TOKEN     = os.environ["INSTAGRAM_ACCESS_TOKEN"]
           USER_ID   = os.environ["INSTAGRAM_USER_ID"]
           LINK_URL  = os.environ["LINK_URL"]
@@ -33,27 +34,27 @@ jobs:
                   with urllib.request.urlopen(req) as r:
                       return json.loads(r.read())
               except urllib.error.HTTPError as e:
-                  body_txt = e.read().decode()
-                  print(f"API 오류 ({e.code}): {body_txt}")
+                  print(f"API 오류 ({e.code}): {e.read().decode()}")
                   raise
 
-          def ig_get(path, fields):
-              qs = urllib.parse.urlencode({"fields": fields, "access_token": TOKEN})
-              url = f"https://graph.instagram.com/v21.0{path}?{qs}"
+          # instagram.com URL → TinyURL 단축 (링크 스티커가 외부 URL에만 작동)
+          short_url = LINK_URL
+          if "instagram.com" in LINK_URL:
               try:
-                  with urllib.request.urlopen(url) as r:
-                      return json.loads(r.read())
-              except urllib.error.HTTPError as e:
-                  print(f"GET 오류 ({e.code}): {e.read().decode()}")
-                  return {}
+                  tinyurl_api = f"https://tinyurl.com/api-create.php?url={urllib.parse.quote(LINK_URL)}"
+                  with urllib.request.urlopen(tinyurl_api, timeout=10) as r:
+                      short_url = r.read().decode().strip()
+                  print(f"단축 URL: {short_url}")
+              except Exception as e:
+                  print(f"단축 실패, 원본 URL 사용: {e}")
 
-          print(f"링크: {LINK_URL}")
+          print(f"링크 스티커 URL: {short_url}")
 
           # 컨테이너 생성
           res = ig_post(f"/{USER_ID}/media", {
               "image_url":  IMAGE_URL,
               "media_type": "STORIES",
-              "url":        LINK_URL,
+              "url":        short_url,
           })
           container_id = res["id"]
           print(f"컨테이너 ID: {container_id}")
@@ -61,15 +62,5 @@ jobs:
           # 게시
           time.sleep(3)
           result = ig_post(f"/{USER_ID}/media_publish", {"creation_id": container_id})
-          media_id = result["id"]
-          print(f"✅ 스토리 게시 완료! ID: {media_id}")
-
-          # 게시된 미디어 정보 확인
-          time.sleep(2)
-          info = ig_get(f"/{media_id}", "id,media_type,timestamp,permalink")
-          print(f"미디어 정보: {json.dumps(info)}")
-
-          # 계정 권한 확인
-          perms = ig_get(f"/{USER_ID}", "id,account_type,username")
-          print(f"계정 정보: {json.dumps(perms)}")
+          print(f"✅ 스토리 게시 완료! ID: {result['id']}")
           PYEOF
