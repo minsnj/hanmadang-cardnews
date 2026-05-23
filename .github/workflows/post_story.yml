@@ -1,0 +1,36 @@
+name: 한마당 스토리 포스팅
+
+on:
+  workflow_dispatch:
+
+jobs:
+  post-story:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Instagram 스토리 포스팅
+        env:
+          INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
+          INSTAGRAM_USER_ID: ${{ secrets.INSTAGRAM_USER_ID }}
+        run: |
+          python3 - << 'PYEOF'
+          import urllib.request, urllib.parse, urllib.error, json, time, os
+          TOKEN   = os.environ["INSTAGRAM_ACCESS_TOKEN"]
+          USER_ID = os.environ["INSTAGRAM_USER_ID"]
+          IMAGE_URL = "https://github.com/minsnj/hanmadang-cardnews/releases/download/hamadang-apps-v1/story.png"
+          def ig_post(path, data):
+              url  = f"https://graph.instagram.com/v21.0{path}"
+              data["access_token"] = TOKEN
+              body = urllib.parse.urlencode(data).encode()
+              req  = urllib.request.Request(url, data=body, method="POST")
+              try:
+                  with urllib.request.urlopen(req) as r:
+                      return json.loads(r.read())
+              except urllib.error.HTTPError as e:
+                  raise RuntimeError(f"오류 ({e.code}): {e.read().decode()}")
+          print("스토리 컨테이너 생성 중...")
+          res = ig_post(f"/{USER_ID}/media", {"image_url": IMAGE_URL, "media_type": "STORIES"})
+          print(f"컨테이너 ID: {res['id']}")
+          time.sleep(3)
+          result = ig_post(f"/{USER_ID}/media_publish", {"creation_id": res["id"]})
+          print(f"✅ 스토리 게시 완료! ID: {result['id']}")
+          PYEOF
