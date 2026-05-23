@@ -33,26 +33,43 @@ jobs:
                   with urllib.request.urlopen(req) as r:
                       return json.loads(r.read())
               except urllib.error.HTTPError as e:
-                  body = e.read().decode()
-                  print(f"API 오류 ({e.code}): {body}")
+                  body_txt = e.read().decode()
+                  print(f"API 오류 ({e.code}): {body_txt}")
                   raise
 
-          print(f"링크: {LINK_URL}")
-          print(f"이미지: {IMAGE_URL}")
+          def ig_get(path, fields):
+              qs = urllib.parse.urlencode({"fields": fields, "access_token": TOKEN})
+              url = f"https://graph.instagram.com/v21.0{path}?{qs}"
+              try:
+                  with urllib.request.urlopen(url) as r:
+                      return json.loads(r.read())
+              except urllib.error.HTTPError as e:
+                  print(f"GET 오류 ({e.code}): {e.read().decode()}")
+                  return {}
 
-          # 컨테이너 생성 (url 파라미터로 링크 스티커)
-          req_data = {
+          print(f"링크: {LINK_URL}")
+
+          # 컨테이너 생성
+          res = ig_post(f"/{USER_ID}/media", {
               "image_url":  IMAGE_URL,
               "media_type": "STORIES",
               "url":        LINK_URL,
-          }
-          print(f"요청 파라미터: {json.dumps({k: v for k, v in req_data.items() if k != 'access_token'})}")
-          res = ig_post(f"/{USER_ID}/media", req_data)
+          })
           container_id = res["id"]
-          print(f"컨테이너 생성 완료: {json.dumps(res)}")
+          print(f"컨테이너 ID: {container_id}")
 
           # 게시
           time.sleep(3)
           result = ig_post(f"/{USER_ID}/media_publish", {"creation_id": container_id})
-          print(f"✅ 스토리 게시 완료! ID: {result['id']}")
+          media_id = result["id"]
+          print(f"✅ 스토리 게시 완료! ID: {media_id}")
+
+          # 게시된 미디어 정보 확인
+          time.sleep(2)
+          info = ig_get(f"/{media_id}", "id,media_type,timestamp,permalink")
+          print(f"미디어 정보: {json.dumps(info)}")
+
+          # 계정 권한 확인
+          perms = ig_get(f"/{USER_ID}", "id,account_type,username")
+          print(f"계정 정보: {json.dumps(perms)}")
           PYEOF
