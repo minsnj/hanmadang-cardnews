@@ -23,6 +23,7 @@ jobs:
           USER_ID   = os.environ["INSTAGRAM_USER_ID"]
           LINK_URL  = os.environ["LINK_URL"]
           IMAGE_URL = "https://github.com/minsnj/hanmadang-cardnews/releases/download/hamadang-apps-v1/story.png"
+
           def ig_post(path, data):
               url  = f"https://graph.instagram.com/v21.0{path}"
               data["access_token"] = TOKEN
@@ -33,14 +34,31 @@ jobs:
                       return json.loads(r.read())
               except urllib.error.HTTPError as e:
                   raise RuntimeError(f"오류 ({e.code}): {e.read().decode()}")
+
+          def ig_get(path):
+              url = f"https://graph.instagram.com/v21.0{path}&access_token={TOKEN}"
+              with urllib.request.urlopen(url) as r:
+                  return json.loads(r.read())
+
           print(f"링크: {LINK_URL}")
+          print(f"이미지: {IMAGE_URL}")
+
+          # 컨테이너 생성
           res = ig_post(f"/{USER_ID}/media", {
               "image_url":  IMAGE_URL,
               "media_type": "STORIES",
               "url":        LINK_URL,
           })
-          print(f"컨테이너 ID: {res['id']}")
-          time.sleep(3)
-          result = ig_post(f"/{USER_ID}/media_publish", {"creation_id": res["id"]})
+          container_id = res["id"]
+          print(f"컨테이너 ID: {container_id}")
+          print(f"컨테이너 응답 전체: {json.dumps(res)}")
+
+          # 컨테이너 상태 확인
+          time.sleep(5)
+          status = ig_get(f"/{container_id}?fields=id,status_code,status,url")
+          print(f"컨테이너 상태: {json.dumps(status)}")
+
+          # 게시
+          result = ig_post(f"/{USER_ID}/media_publish", {"creation_id": container_id})
           print(f"✅ 스토리 게시 완료! ID: {result['id']}")
           PYEOF
