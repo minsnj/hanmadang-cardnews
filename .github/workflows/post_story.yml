@@ -37,7 +37,7 @@ jobs:
           res = ig_post(f"/{USER_ID}/media", {
               "image_url":  IMAGE_URL,
               "media_type": "STORIES",
-              "link_url":   LINK_URL,
+              "url":        LINK_URL,
           })
           print(f"컨테이너 ID: {res['id']}")
           time.sleep(3)
