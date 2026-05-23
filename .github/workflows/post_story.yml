@@ -24,9 +24,10 @@ jobs:
           USER_ID  = os.environ["INSTAGRAM_USER_ID"]
           LINK_URL = os.environ["LINK_URL"]
           IMAGE_URL = "https://github.com/minsnj/hanmadang-cardnews/releases/download/hamadang-apps-v1/story.png"
+          BASE = "https://graph.facebook.com/v21.0"
 
-          def api_post(base, path, data):
-              url  = f"{base}/v21.0{path}"
+          def ig_post(path, data):
+              url  = f"{BASE}{path}"
               data["access_token"] = TOKEN
               body = urllib.parse.urlencode(data).encode()
               req  = urllib.request.Request(url, data=body, method="POST")
@@ -37,46 +38,29 @@ jobs:
                   print(f"POST error ({e.code}): {e.read().decode()}")
                   raise
 
-          # Shorten instagram URL
+          # TinyURL로 단축
           short_url = LINK_URL
           if "instagram.com" in LINK_URL:
               try:
                   api = f"https://tinyurl.com/api-create.php?url={urllib.parse.quote(LINK_URL)}"
                   with urllib.request.urlopen(api, timeout=10) as r:
                       short_url = r.read().decode().strip()
-                  print(f"Short URL: {short_url}")
+                  print(f"단축 URL: {short_url}")
               except Exception as e:
-                  print(f"Shorten failed: {e}")
+                  print(f"단축 실패: {e}")
 
-          # Try 1: graph.instagram.com
-          print("=== Try 1: graph.instagram.com ===")
-          try:
-              res = api_post("https://graph.instagram.com", f"/{USER_ID}/media", {
-                  "image_url":  IMAGE_URL,
-                  "media_type": "STORIES",
-                  "url":        short_url,
-              })
-              cid = res["id"]
-              print(f"Container: {cid}")
-              time.sleep(3)
-              result = api_post("https://graph.instagram.com", f"/{USER_ID}/media_publish", {"creation_id": cid})
-              print(f"Published: {result['id']}")
-          except Exception as e:
-              print(f"Try 1 failed: {e}")
+          print(f"링크 스티커: {short_url}")
 
-              # Try 2: graph.facebook.com
-              print("=== Try 2: graph.facebook.com ===")
-              try:
-                  res2 = api_post("https://graph.facebook.com", f"/{USER_ID}/media", {
-                      "image_url":  IMAGE_URL,
-                      "media_type": "STORIES",
-                      "url":        short_url,
-                  })
-                  cid2 = res2["id"]
-                  print(f"Container: {cid2}")
-                  time.sleep(3)
-                  result2 = api_post("https://graph.facebook.com", f"/{USER_ID}/media_publish", {"creation_id": cid2})
-                  print(f"Published: {result2['id']}")
-              except Exception as e2:
-                  print(f"Try 2 failed: {e2}")
+          # 컨테이너 생성 (graph.facebook.com 사용)
+          res = ig_post(f"/{USER_ID}/media", {
+              "image_url":  IMAGE_URL,
+              "media_type": "STORIES",
+              "url":        short_url,
+          })
+          container_id = res["id"]
+          print(f"컨테이너: {container_id}")
+
+          time.sleep(3)
+          result = ig_post(f"/{USER_ID}/media_publish", {"creation_id": container_id})
+          print(f"✅ 게시 완료! ID: {result['id']}")
           EOF
