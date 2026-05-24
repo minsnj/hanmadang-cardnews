@@ -30,7 +30,6 @@ jobs:
           LINK_URL = os.environ["LINK_URL"]
           IMAGE_URL = "https://github.com/minsnj/hanmadang-cardnews/releases/download/hamadang-apps-v1/story.png"
 
-          # 이미지 다운로드
           urllib.request.urlretrieve(IMAGE_URL, "/tmp/story.png")
           print("이미지 다운로드 완료")
 
@@ -39,7 +38,8 @@ jobs:
           if TOTP_SECRET:
               import pyotp
               totp_code = pyotp.TOTP(TOTP_SECRET).now()
-              cl.login(USERNAME, PASSWORD, verification_code=totp_code)
+              print(f"TOTP 코드 생성: {totp_code}")
+              cl.login(USERNAME, PASSWORD, totp_code=totp_code)
           else:
               cl.login(USERNAME, PASSWORD)
 
