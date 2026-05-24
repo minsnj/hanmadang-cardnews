@@ -18,7 +18,7 @@ jobs:
           INSTAGRAM_TOTP_SECRET: ${{ secrets.INSTAGRAM_TOTP_SECRET }}
           LINK_URL: ${{ github.event.inputs.link_url }}
         run: |
-          pip install instagrapi pillow -q
+          pip install instagrapi pillow pyotp -q
           python3 - << 'EOF'
           import os, urllib.request
           from instagrapi import Client
@@ -36,14 +36,15 @@ jobs:
 
           cl = Client()
 
-          # TOTP 2FA 설정
           if TOTP_SECRET:
-              cl.set_totp_identifier(TOTP_SECRET)
+              import pyotp
+              totp_code = pyotp.TOTP(TOTP_SECRET).now()
+              cl.login(USERNAME, PASSWORD, verification_code=totp_code)
+          else:
+              cl.login(USERNAME, PASSWORD)
 
-          cl.login(USERNAME, PASSWORD)
           print(f"로그인 완료: {USERNAME}")
 
-          # 스토리 업로드 with 링크 스티커
           media = cl.photo_upload_to_story(
               "/tmp/story.png",
               links=[StoryLink(webUri=LINK_URL)]
