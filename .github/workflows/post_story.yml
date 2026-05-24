@@ -11,56 +11,42 @@ jobs:
   post-story:
     runs-on: ubuntu-latest
     steps:
-      - name: "Instagram 스토리 포스팅"
+      - name: "Instagram 스토리 포스팅 (instagrapi)"
         env:
-          INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
-          INSTAGRAM_USER_ID: ${{ secrets.INSTAGRAM_USER_ID }}
+          INSTAGRAM_USERNAME: ${{ secrets.INSTAGRAM_USERNAME }}
+          INSTAGRAM_PASSWORD: ${{ secrets.INSTAGRAM_PASSWORD }}
+          INSTAGRAM_TOTP_SECRET: ${{ secrets.INSTAGRAM_TOTP_SECRET }}
           LINK_URL: ${{ github.event.inputs.link_url }}
         run: |
+          pip install instagrapi pillow -q
           python3 - << 'EOF'
-          import urllib.request, urllib.parse, urllib.error, json, time, os
+          import os, urllib.request
+          from instagrapi import Client
+          from instagrapi.types import StoryLink
 
-          TOKEN    = os.environ["INSTAGRAM_ACCESS_TOKEN"]
-          USER_ID  = os.environ["INSTAGRAM_USER_ID"]
+          USERNAME = os.environ["INSTAGRAM_USERNAME"]
+          PASSWORD = os.environ["INSTAGRAM_PASSWORD"]
+          TOTP_SECRET = os.environ.get("INSTAGRAM_TOTP_SECRET", "")
           LINK_URL = os.environ["LINK_URL"]
           IMAGE_URL = "https://github.com/minsnj/hanmadang-cardnews/releases/download/hamadang-apps-v1/story.png"
-          BASE = "https://graph.instagram.com/v21.0"
 
-          def ig_post(path, data):
-              url  = f"{BASE}{path}"
-              data["access_token"] = TOKEN
-              body = urllib.parse.urlencode(data).encode()
-              req  = urllib.request.Request(url, data=body, method="POST")
-              try:
-                  with urllib.request.urlopen(req) as r:
-                      return json.loads(r.read())
-              except urllib.error.HTTPError as e:
-                  print(f"POST error ({e.code}): {e.read().decode()}")
-                  raise
+          # 이미지 다운로드
+          urllib.request.urlretrieve(IMAGE_URL, "/tmp/story.png")
+          print("이미지 다운로드 완료")
 
-          # TinyURL로 단축 (instagram.com URL인 경우)
-          short_url = LINK_URL
-          if "instagram.com" in LINK_URL:
-              try:
-                  api = f"https://tinyurl.com/api-create.php?url={urllib.parse.quote(LINK_URL)}"
-                  with urllib.request.urlopen(api, timeout=10) as r:
-                      short_url = r.read().decode().strip()
-                  print(f"단축 URL: {short_url}")
-              except Exception as e:
-                  print(f"단축 실패, 원본 사용: {e}")
+          cl = Client()
 
-          print(f"링크 스티커 URL: {short_url}")
+          # TOTP 2FA 설정
+          if TOTP_SECRET:
+              cl.set_totp_identifier(TOTP_SECRET)
 
-          # 컨테이너 생성
-          res = ig_post(f"/{USER_ID}/media", {
-              "image_url":  IMAGE_URL,
-              "media_type": "STORIES",
-              "url":        short_url,
-          })
-          container_id = res["id"]
-          print(f"컨테이너: {container_id}")
+          cl.login(USERNAME, PASSWORD)
+          print(f"로그인 완료: {USERNAME}")
 
-          time.sleep(3)
-          result = ig_post(f"/{USER_ID}/media_publish", {"creation_id": container_id})
-          print(f"✅ 게시 완료! ID: {result['id']}")
+          # 스토리 업로드 with 링크 스티커
+          media = cl.photo_upload_to_story(
+              "/tmp/story.png",
+              links=[StoryLink(webUri=LINK_URL)]
+          )
+          print(f"✅ 게시 완료! ID: {media.id}")
           EOF
