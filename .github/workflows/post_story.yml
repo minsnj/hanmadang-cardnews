@@ -13,38 +13,30 @@ jobs:
     steps:
       - name: "Instagram 스토리 포스팅 (instagrapi)"
         env:
-          INSTAGRAM_USERNAME: ${{ secrets.INSTAGRAM_USERNAME }}
-          INSTAGRAM_PASSWORD: ${{ secrets.INSTAGRAM_PASSWORD }}
-          INSTAGRAM_TOTP_SECRET: ${{ secrets.INSTAGRAM_TOTP_SECRET }}
+          INSTAGRAM_SESSION: ${{ secrets.INSTAGRAM_SESSION }}
           LINK_URL: ${{ github.event.inputs.link_url }}
         run: |
-          pip install instagrapi pillow pyotp -q
+          pip install instagrapi pillow -q
           python3 - << 'EOF'
-          import os, urllib.request
+          import os, json, urllib.request
           from instagrapi import Client
           from instagrapi.types import StoryLink
 
-          USERNAME = os.environ["INSTAGRAM_USERNAME"]
-          PASSWORD = os.environ["INSTAGRAM_PASSWORD"]
-          TOTP_SECRET = os.environ.get("INSTAGRAM_TOTP_SECRET", "")
           LINK_URL = os.environ["LINK_URL"]
           IMAGE_URL = "https://github.com/minsnj/hanmadang-cardnews/releases/download/hamadang-apps-v1/story.png"
 
+          # 이미지 다운로드
           urllib.request.urlretrieve(IMAGE_URL, "/tmp/story.png")
           print("이미지 다운로드 완료")
 
+          # 세션으로 로그인
+          session = json.loads(os.environ["INSTAGRAM_SESSION"])
           cl = Client()
+          cl.set_settings(session)
+          cl.login(session["authorization_data"]["ds_user_id"], "")
+          print(f"세션 로그인 완료")
 
-          if TOTP_SECRET:
-              import pyotp
-              totp_code = pyotp.TOTP(TOTP_SECRET).now()
-              print(f"TOTP 코드 생성: {totp_code}")
-              cl.login(USERNAME, PASSWORD, totp_code=totp_code)
-          else:
-              cl.login(USERNAME, PASSWORD)
-
-          print(f"로그인 완료: {USERNAME}")
-
+          # 링크 스티커 포함 스토리 업로드
           media = cl.photo_upload_to_story(
               "/tmp/story.png",
               links=[StoryLink(webUri=LINK_URL)]
