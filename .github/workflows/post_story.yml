@@ -29,12 +29,12 @@ jobs:
           urllib.request.urlretrieve(IMAGE_URL, "/tmp/story.png")
           print("이미지 다운로드 완료")
 
-          # 세션으로 로그인
+          # 세션 복원
           session = json.loads(os.environ["INSTAGRAM_SESSION"])
           cl = Client()
           cl.set_settings(session)
-          cl.login(session["authorization_data"]["ds_user_id"], "")
-          print(f"세션 로그인 완료")
+          cl.get_timeline_feed()
+          print("세션 로그인 완료")
 
           # 링크 스티커 포함 스토리 업로드
           media = cl.photo_upload_to_story(
