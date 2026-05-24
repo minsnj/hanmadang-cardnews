@@ -16,7 +16,7 @@ jobs:
           INSTAGRAM_SESSION: ${{ secrets.INSTAGRAM_SESSION }}
           LINK_URL: ${{ github.event.inputs.link_url }}
         run: |
-          pip install instagrapi pillow -q
+          pip install "instagrapi==2.6.5" pillow -q
           python3 - << 'EOF'
           import os, json, urllib.request
           from instagrapi import Client
@@ -33,7 +33,7 @@ jobs:
 
           cl = Client()
           cl.login_by_sessionid(sessionid)
-          print(f"세션 로그인 완료")
+          print("세션 로그인 완료")
 
           media = cl.photo_upload_to_story(
               "/tmp/story.png",
