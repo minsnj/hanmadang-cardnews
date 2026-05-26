@@ -472,7 +472,7 @@ def refresh_instagram_token(access_token):
             result = subprocess.run(
                 ["gh", "secret", "set", "INSTAGRAM_ACCESS_TOKEN", "--body", new_token, "--repo", repo],
                 capture_output=True, text=True,
-                env={**os.environ, "GH_TOKEN": os.environ.get("GH_PAT", os.environ.get("GH_TOKEN", ""))}
+                env={**os.environ, "GH_TOKEN": os.environ.get("GH_TOKEN", os.environ.get("GH_PAT", ""))}
             )
             if result.returncode == 0:
                 print("   ✅ 토큰 갱신 및 Secret 업데이트 완료")
@@ -625,7 +625,7 @@ def post_story(image_dir, target_date, permalink, access_token, user_id, ig_post
     subprocess.run(
         ["gh", "release", "upload", tag, story_png, "--clobber", "--repo", repo],
         check=True,
-        env={**os.environ, "GH_TOKEN": os.environ.get("GH_PAT", os.environ.get("GH_TOKEN", ""))}
+        env={**os.environ, "GH_TOKEN": os.environ.get("GH_TOKEN", os.environ.get("GH_PAT", ""))}
     )
     story_url = f"https://github.com/{repo}/releases/download/{tag}/story.png"
     _time.sleep(5)
