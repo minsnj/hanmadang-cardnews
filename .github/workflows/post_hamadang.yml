@@ -1,0 +1,50 @@
+name: 한마당 Instagram 포스팅
+
+on:
+  workflow_dispatch:
+
+jobs:
+  post-instagram:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Instagram 캐러셀 포스팅
+        env:
+          INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
+          INSTAGRAM_USER_ID: ${{ secrets.INSTAGRAM_USER_ID }}
+        run: |
+          python3 - << 'PYEOF'
+          import urllib.request, urllib.parse, urllib.error, json, time, os
+          TOKEN   = os.environ["INSTAGRAM_ACCESS_TOKEN"]
+          USER_ID = os.environ["INSTAGRAM_USER_ID"]
+          BASE    = "https://github.com/minsnj/hanmadang-cardnews/releases/download/hamadang-apps-v1"
+          IMAGES  = [f"{BASE}/card_{i:02d}.png" for i in range(1, 8)]
+          CAPTION = (
+              "📱 말레이시아 생활 필수 앱 6선\n\n"
+              "말레이시아에서 꼭 필요한 앱들을 한마당이 정리했어요!\n"
+              "스와이프해서 각 앱의 활용법을 확인하세요 👉\n\n"
+              "#말레이시아앱 #말레이시아생활 #한마당 #교민정보 "
+              "#WhatsApp #Grab #TouchnGo #MYTNB #TIME인터넷 "
+              "#말레이시아 #Malaysia #한인교민 #카드뉴스"
+          )
+          def ig_post(path, data):
+              url  = f"https://graph.instagram.com/v21.0{path}"
+              data["access_token"] = TOKEN
+              body = urllib.parse.urlencode(data).encode()
+              req  = urllib.request.Request(url, data=body, method="POST")
+              try:
+                  with urllib.request.urlopen(req) as r:
+                      return json.loads(r.read())
+              except urllib.error.HTTPError as e:
+                  raise RuntimeError(f"오류 ({e.code}): {e.read().decode()}")
+          print(f"📸 컨테이너 생성 중 ({len(IMAGES)}개)...")
+          ids = []
+          for i, url in enumerate(IMAGES):
+              res = ig_post(f"/{USER_ID}/media", {"image_url": url, "is_carousel_item": "true"})
+              ids.append(res["id"])
+              print(f"  [{i+1}] {res['id']}")
+              time.sleep(1)
+          carousel = ig_post(f"/{USER_ID}/media", {"media_type":"CAROUSEL","children":",".join(ids),"caption":CAPTION})
+          time.sleep(5)
+          result = ig_post(f"/{USER_ID}/media_publish", {"creation_id": carousel["id"]})
+          print(f"✅ 게시 완료! ID: {result['id']}")
+          PYEOF
