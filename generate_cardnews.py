@@ -550,7 +550,106 @@ def post_via_graph_api(image_dir, target_date):
     _time.sleep(5)
     print("\n🚀 게시 중...")
     result = ig_post(f"/{user_id}/media_publish", {"creation_id": carousel["id"]})
-    print(f"   ✅ 게시 완료! 게시물 ID: {result['id']}")
+    media_id = result["id"]
+    print(f"   ✅ 게시 완료! 게시물 ID: {media_id}")
+
+    # 5. permalink 조회 후 스토리 포스팅
+    try:
+        perm_url = (f"https://graph.instagram.com/v21.0/{media_id}"
+                    f"?fields=permalink&access_token={access_token}")
+        with urllib.request.urlopen(perm_url) as r:
+            permalink = json.loads(r.read()).get("permalink", "")
+        print(f"   🔗 게시물 링크: {permalink}")
+        post_story(image_dir, target_date, permalink, access_token, user_id, ig_post)
+    except Exception as e:
+        print(f"⚠️  스토리 포스팅 실패: {e}")
+
+
+def generate_story_png(first_card_path, output_dir):
+    """story.html을 Playwright로 렌더링하여 story.png 생성"""
+    import shutil, tempfile
+    from playwright.sync_api import sync_playwright
+
+    story_html = os.path.join(os.path.dirname(os.path.abspath(__file__)), "story.html")
+    if not os.path.exists(story_html):
+        raise FileNotFoundError("story.html이 없습니다.")
+
+    # card_01.png를 절대 경로로 바꿔 임시 HTML 생성
+    with open(story_html, encoding="utf-8") as f:
+        html = f.read()
+    html = html.replace("exports/card_01.png", first_card_path.replace("\\", "/"))
+
+    with tempfile.NamedTemporaryFile(suffix=".html", mode="w", delete=False, encoding="utf-8") as tmp:
+        tmp.write(html)
+        tmp_path = tmp.name
+
+    story_png = os.path.join(output_dir, "story.png")
+    import time as _t
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch()
+            page = browser.new_page(viewport={"width": 540, "height": 960}, device_scale_factor=2)
+            page.goto(f"file://{tmp_path}", wait_until="networkidle")
+            _t.sleep(1.5)
+            page.screenshot(path=story_png, clip={"x": 0, "y": 0, "width": 540, "height": 960})
+            browser.close()
+        print(f"   ✅ story.png 생성됨")
+    finally:
+        os.unlink(tmp_path)
+
+    return story_png
+
+
+def post_story(image_dir, target_date, permalink, access_token, user_id, ig_post):
+    """story.png 생성 후 Instagram Graph API로 스토리 + 링크스티커 게시"""
+    import subprocess, shutil, time as _time
+
+    print("\n📖 스토리 생성 중...")
+
+    # 첫 번째 카드 이미지 경로
+    first_card = os.path.join(image_dir, "card01.png")
+    if not os.path.exists(first_card):
+        cards = sorted(glob.glob(os.path.join(image_dir, "card*.png")))
+        if not cards:
+            cards = sorted(glob.glob(os.path.join(image_dir, "템플릿*.png")))
+        first_card = cards[0] if cards else None
+    if not first_card:
+        print("⚠️  첫 번째 카드 이미지를 찾을 수 없습니다.")
+        return
+
+    story_png = generate_story_png(first_card, image_dir)
+
+    # GitHub Release에 story.png 업로드
+    repo = os.environ.get("GITHUB_REPOSITORY", "minsnj/hanmadang-cardnews")
+    tag  = f"cardnews-{target_date}"
+    subprocess.run(
+        ["gh", "release", "upload", tag, story_png, "--clobber", "--repo", repo],
+        check=True,
+        env={**os.environ, "GH_TOKEN": os.environ.get("GH_PAT", os.environ.get("GH_TOKEN", ""))}
+    )
+    story_url = f"https://github.com/{repo}/releases/download/{tag}/story.png"
+    _time.sleep(5)
+
+    # 스토리 컨테이너 생성 (링크스티커 포함)
+    print("\n📤 스토리 업로드 중...")
+    try:
+        container = ig_post(f"/{user_id}/media", {
+            "image_url":        story_url,
+            "is_story":         "true",
+            "story_sticker_ids": "ig_link",
+            "url":              permalink,
+        })
+    except Exception:
+        # 링크스티커 실패 시 스티커 없이 재시도
+        print("   ⚠️  링크스티커 미지원 — 스티커 없이 재시도")
+        container = ig_post(f"/{user_id}/media", {
+            "image_url": story_url,
+            "is_story":  "true",
+        })
+
+    _time.sleep(3)
+    result = ig_post(f"/{user_id}/media_publish", {"creation_id": container["id"]})
+    print(f"   ✅ 스토리 게시 완료! ID: {result['id']}")
 
 
 # ── 메인 ──────────────────────────────────────────────
