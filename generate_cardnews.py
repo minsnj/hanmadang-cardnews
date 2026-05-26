@@ -567,8 +567,23 @@ def main():
         print(f"❌ {target_date} 날짜의 기사가 없습니다.")
         sys.exit(1)
 
-    # 3. 최대 MAX_CARDS 개 선택
-    selected = today_rows[:MAX_CARDS]
+    # 3. 한국-말레이시아 연관 기사 우선 정렬 후 MAX_CARDS 개 선택
+    KR_KEYWORDS = [
+        "한국", "한인", "교민", "코리아", "한류", "K-pop", "K-drama", "케이팝", "케이드라마",
+        "삼성", "LG", "현대", "기아", "롯데", "CJ", "SK", "포스코",
+        "Korea", "Korean", "Koreans", "Seoul", "Busan",
+        "Samsung", "Hyundai", "Kia", "Lotte",
+    ]
+
+    def korea_score(row):
+        text = " ".join([row[3] if len(row) > 3 else "", row[4] if len(row) > 4 else ""])
+        return sum(1 for kw in KR_KEYWORDS if kw.lower() in text.lower())
+
+    today_rows_sorted = sorted(today_rows, key=korea_score, reverse=True)
+    selected = today_rows_sorted[:MAX_CARDS]
+
+    kr_related = sum(1 for r in selected if korea_score(r) > 0)
+    print(f"   한국-말레이시아 연관 기사 {kr_related}개 우선 선정")
 
     # 4. 각 기사 OG 이미지 크롤링
     print(f"\n🖼  기사 이미지 크롤링 중 ({len(selected)}개)...")
