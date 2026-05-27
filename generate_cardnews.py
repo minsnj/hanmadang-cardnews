@@ -601,8 +601,8 @@ def generate_story_png(first_card_path, output_dir):
 
 
 def post_story(image_dir, target_date, permalink, access_token, user_id, ig_post):
-    """story.png 생성 후 Instagram Graph API로 스토리 + 링크스티커 게시"""
-    import subprocess, shutil, time as _time
+    """story.png 생성 후 instagrapi(패치)로 링크스티커 포함 스토리 게시"""
+    import json, re, types, time as _time
 
     print("\n📖 스토리 생성 중...")
 
@@ -619,37 +619,78 @@ def post_story(image_dir, target_date, permalink, access_token, user_id, ig_post
 
     story_png = generate_story_png(first_card, image_dir)
 
-    # GitHub Release에 story.png 업로드
-    repo = os.environ.get("GITHUB_REPOSITORY", "minsnj/hanmadang-cardnews")
-    tag  = f"cardnews-{target_date}"
-    subprocess.run(
-        ["gh", "release", "upload", tag, story_png, "--clobber", "--repo", repo],
-        check=True,
-        env={**os.environ, "GH_TOKEN": os.environ.get("GH_TOKEN", os.environ.get("GH_PAT", ""))}
+    # ── instagrapi 클라이언트 (패치 적용) ──────────────────
+    from instagrapi import Client
+    from instagrapi.extractors import extract_media_v1
+    from instagrapi.types import StoryLink
+
+    session_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".ig_session.json")
+    if not os.path.exists(session_path):
+        print("⚠️  .ig_session.json 없음 — 스토리 건너뜀")
+        return
+
+    with open(session_path) as f:
+        settings = json.load(f)
+    cookies = settings.get("cookies", {})
+    if not cookies.get("sessionid"):
+        print("⚠️  세션 만료 — 스토리 건너뜀")
+        return
+
+    cl = Client()
+    cl.set_locale("ko_KR")
+    cl.set_timezone_offset(32400)
+    cl.delay_range = [1, 3]
+    for k, v in cookies.items():
+        cl.private.cookies.set(k, v)
+    user_id_str = cookies.get("ds_user_id", "")
+    if not user_id_str:
+        m = re.match(r"^\d+", cookies.get("sessionid", ""))
+        user_id_str = m.group() if m else ""
+    cl.authorization_data = {
+        "ds_user_id": user_id_str,
+        "sessionid":  cookies["sessionid"],
+        "should_use_header_over_cookies": True,
+    }
+    cl.username = "hanmadang_my"
+    if "mid" in cookies:
+        cl.mid = cookies["mid"]
+
+    # 패치 1: validate_reel_url bypass
+    _saved: dict = {}
+    _orig = cl.private_request.__func__
+    def _private_request(self, endpoint, *args, **kwargs):
+        if endpoint == "media/validate_reel_url/":
+            return {"status": "ok"}
+        result = _orig(self, endpoint, *args, **kwargs)
+        if endpoint == "media/configure_to_story/" and isinstance(result, dict):
+            _saved.clear(); _saved.update(result)
+        return result
+    cl.private_request = types.MethodType(_private_request, cl)
+
+    # 패치 2: media 키 없을 때 캐시에서 복구
+    def _extract(self, configured, exception_cls, context: str):
+        media = configured.get("media") if isinstance(configured, dict) else None
+        if media is None and _saved:
+            media = _saved.get("media")
+        if media is None:
+            raise exception_cls(
+                f"{context} configure succeeded without media payload",
+                response=self.last_response,
+                **(self.last_json if isinstance(self.last_json, dict) else {}),
+            )
+        return extract_media_v1(media)
+    cl._extract_configured_media_or_raise = types.MethodType(_extract, cl)
+
+    cl.load_settings(session_path)
+
+    # ── 스토리 업로드 ──────────────────────────────────────
+    print("\n📤 스토리 업로드 중 (링크스티커)...")
+    story = cl.photo_upload_to_story(
+        str(story_png),
+        links=[StoryLink(webUri=permalink)],
     )
-    story_url = f"https://github.com/{repo}/releases/download/{tag}/story.png"
-    _time.sleep(5)
-
-    # 스토리 컨테이너 생성 (링크스티커 포함, 실패 시 스티커 없이 재시도)
-    print("\n📤 스토리 업로드 중...")
-    try:
-        container = ig_post(f"/{user_id}/media", {
-            "image_url":         story_url,
-            "media_type":        "STORIES",
-            "story_sticker_ids": "ig_link",
-            "url":               permalink,
-        })
-        print(f"   🔗 링크스티커 추가됨: {permalink}")
-    except Exception as e:
-        print(f"   ⚠️  링크스티커 실패 ({e}) — 스티커 없이 재시도")
-        container = ig_post(f"/{user_id}/media", {
-            "image_url":  story_url,
-            "media_type": "STORIES",
-        })
-
-    _time.sleep(3)
-    result = ig_post(f"/{user_id}/media_publish", {"creation_id": container["id"]})
-    print(f"   ✅ 스토리 게시 완료! ID: {result['id']}")
+    print(f"   ✅ 스토리 게시 완료! ID: {story.pk}")
+    print(f"   🔗 링크스티커: {permalink}")
 
 
 # ── 메인 ──────────────────────────────────────────────
