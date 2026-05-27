@@ -630,12 +630,22 @@ def post_story(image_dir, target_date, permalink, access_token, user_id, ig_post
     story_url = f"https://github.com/{repo}/releases/download/{tag}/story.png"
     _time.sleep(5)
 
-    # 스토리 컨테이너 생성
+    # 스토리 컨테이너 생성 (링크스티커 포함, 실패 시 스티커 없이 재시도)
     print("\n📤 스토리 업로드 중...")
-    container = ig_post(f"/{user_id}/media", {
-        "image_url":  story_url,
-        "media_type": "STORIES",
-    })
+    try:
+        container = ig_post(f"/{user_id}/media", {
+            "image_url":         story_url,
+            "media_type":        "STORIES",
+            "story_sticker_ids": "ig_link",
+            "url":               permalink,
+        })
+        print(f"   🔗 링크스티커 추가됨: {permalink}")
+    except Exception as e:
+        print(f"   ⚠️  링크스티커 실패 ({e}) — 스티커 없이 재시도")
+        container = ig_post(f"/{user_id}/media", {
+            "image_url":  story_url,
+            "media_type": "STORIES",
+        })
 
     _time.sleep(3)
     result = ig_post(f"/{user_id}/media_publish", {"creation_id": container["id"]})
