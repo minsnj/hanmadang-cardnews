@@ -22,7 +22,7 @@ jobs:
 
       - name: 의존성 설치
         run: |
-          pip install anthropic playwright
+          pip install anthropic playwright instagrapi
           python3 -m playwright install --with-deps chromium
 
       - name: .env 파일 생성
@@ -33,6 +33,7 @@ jobs:
           INSTAGRAM_USER_ID=${{ secrets.INSTAGRAM_USER_ID }}
           GITHUB_REPOSITORY=${{ github.repository }}
           EOF
+          echo "${{ secrets.INSTAGRAM_SESSION_B64 }}" | base64 -d > .ig_session.json
 
       - name: 카드뉴스 생성 및 포스팅
         run: python3 generate_cardnews.py
