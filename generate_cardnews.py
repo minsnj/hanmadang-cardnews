@@ -506,7 +506,7 @@ def post_via_graph_api(image_dir, target_date):
         "오늘의 말레이시아 주요 소식을 한마당이 전합니다.\n"
         "스와이프해서 더 많은 뉴스를 확인하세요 👉\n\n"
         "#말레이시아뉴스 #한마당 #실시간뉴스 #말레이시아 #Malaysia "
-        f"#{target_date.replace('-', '')} #해외뉴스 #카드뉴스"
+        f"#{target_date.replace('-', '')} #해외뉴스 #카드뉴스 #교민뉴스 #말레이시아한인 #한인생활"
     )
 
     def ig_post(path, data):
@@ -553,16 +553,22 @@ def post_via_graph_api(image_dir, target_date):
     media_id = result["id"]
     print(f"   ✅ 게시 완료! 게시물 ID: {media_id}")
 
-    # 5. permalink 조회 후 스토리 포스팅
+    # 5. permalink 조회 (스토리는 로컬 auto_story.py가 담당 — 아래 주석 참고)
     try:
         perm_url = (f"https://graph.instagram.com/v21.0/{media_id}"
                     f"?fields=permalink&access_token={access_token}")
         with urllib.request.urlopen(perm_url) as r:
             permalink = json.loads(r.read()).get("permalink", "")
         print(f"   🔗 게시물 링크: {permalink}")
-        post_story(image_dir, target_date, permalink, access_token, user_id, ig_post)
     except Exception as e:
-        print(f"⚠️  스토리 포스팅 실패: {e}")
+        print(f"⚠️  permalink 조회 실패: {e}")
+
+    # ⚠️ 스토리 포스팅을 여기서 하지 않는다.
+    # GitHub Actions IP는 인스타그램이 스토리 '링크스티커'를 차단하므로
+    # (링크 없는 스토리만 올라감) 스토리는 로컬 Mac launchd(auto_story.py)가
+    # 링크스티커 포함해서 단독으로 담당한다. 여기서 post_story()를 호출하면
+    # 링크 없는 스토리가 중복으로 올라가므로 절대 호출하지 말 것.
+    # post_story(image_dir, target_date, permalink, access_token, user_id, ig_post)  # 사용 금지
 
 
 def generate_story_png(first_card_path, output_dir):
@@ -763,9 +769,13 @@ def main():
     gen_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     html     = build_html("\n".join(slides), total, gen_time)
 
-    # 6. 파일 저장
-    with open(OUTPUT, "w", encoding="utf-8") as f:
-        f.write(html)
+    # 6. 파일 저장 (임시 파일로 쓴 뒤 이동 - macOS EDEADLK 우회)
+    import tempfile, shutil
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=os.path.dirname(OUTPUT),
+                                     suffix=".html.tmp", delete=False) as tmp:
+        tmp.write(html)
+        tmp_path = tmp.name
+    shutil.move(tmp_path, OUTPUT)
 
     print(f"\n✅ 완료! 총 {total}장 ({len(articles)}개 기사)")
     print(f"   저장 위치: {OUTPUT}")
