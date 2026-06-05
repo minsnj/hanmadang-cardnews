@@ -2,7 +2,8 @@ name: 한마당 카드뉴스 자동 포스팅
 
 on:
   schedule:
-    - cron: '0 0 * * *'
+    # UTC 22:37 = MYT 06:37 (크롤러 06:00 이후, 혼잡한 UTC 00:00 회피로 지연 최소화)
+    - cron: '37 22 * * *'
   workflow_dispatch:
 
 jobs:
