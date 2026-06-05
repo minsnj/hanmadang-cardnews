@@ -17,7 +17,11 @@ import glob
 import urllib.request
 import urllib.error
 import urllib.parse
-from datetime import date, datetime
+from datetime import date, datetime, timezone, timedelta
+
+# 크롤러가 수집시각을 MYT(말레이시아)로 저장하므로 대상 날짜도 MYT 기준으로 계산.
+# (GitHub Actions 러너는 UTC라 date.today()를 쓰면 cron MYT 06:48 실행 시 전날로 잡힘)
+MYT = timezone(timedelta(hours=8))
 from html import escape
 try:
     import anthropic
@@ -701,7 +705,7 @@ def post_story(image_dir, target_date, permalink, access_token, user_id, ig_post
 
 # ── 메인 ──────────────────────────────────────────────
 def main():
-    target_date = sys.argv[1] if len(sys.argv) > 1 else date.today().strftime("%Y-%m-%d")
+    target_date = sys.argv[1] if len(sys.argv) > 1 else datetime.now(MYT).strftime("%Y-%m-%d")
     print(f"\n🗓  대상 날짜: {target_date}")
 
     # 1. 시트 데이터 가져오기
