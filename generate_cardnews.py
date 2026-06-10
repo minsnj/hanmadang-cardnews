@@ -725,11 +725,20 @@ def main():
         "Samsung", "Hyundai", "Kia", "Lotte",
     ]
 
+    POLITICS_PENALTY = 3  # 정치 카테고리 감점 (후순위로 밀어냄)
+
     def korea_score(row):
         text = " ".join([row[3] if len(row) > 3 else "", row[4] if len(row) > 4 else ""])
         return sum(1 for kw in KR_KEYWORDS if kw.lower() in text.lower())
 
-    today_rows_sorted = sorted(today_rows, key=korea_score, reverse=True)
+    def select_score(row):
+        score = korea_score(row)
+        category = row[1] if len(row) > 1 else ""
+        if category == "정치":
+            score -= POLITICS_PENALTY
+        return score
+
+    today_rows_sorted = sorted(today_rows, key=select_score, reverse=True)
     selected = today_rows_sorted[:MAX_CARDS]
 
     kr_related = sum(1 for r in selected if korea_score(r) > 0)
