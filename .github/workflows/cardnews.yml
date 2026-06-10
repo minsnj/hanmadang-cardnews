@@ -42,6 +42,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_PAT: ${{ secrets.GH_PAT }}
 
+      - name: 게시 기록 커밋 (중복 방지용 posted_history.json)
+        if: success()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add posted_history.json
+          git diff --staged --quiet || (git commit -m "chore: 게시 기록 업데이트 [skip ci]" && git pull --rebase && git push)
+
       - name: 생성된 이미지 업로드 (아카이브)
         uses: actions/upload-artifact@v4
         if: always()

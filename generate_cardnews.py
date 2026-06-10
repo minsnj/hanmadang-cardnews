@@ -47,6 +47,49 @@ SHEET_ID   = "18BUYAw1ruBDUEbvxg8AUpm9WOCsvB6iZy1amAzCpgKg"
 SHEET_URL  = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid=0"
 OUTPUT     = os.path.join(os.path.dirname(os.path.abspath(__file__)), "카드뉴스.html")
 MAX_CARDS  = 7   # 최대 기사 카드 수 (커버·아웃트로 제외)
+
+# 이전에 카드뉴스로 올린 기사 기록 (중복 게시 방지) — 워크플로우가 커밋해 영구 보존
+HISTORY_FILE      = os.path.join(os.path.dirname(os.path.abspath(__file__)), "posted_history.json")
+HISTORY_KEEP_DAYS = 14
+
+
+def _norm_title(s):
+    return "".join(ch for ch in (s or "").lower() if ch.isalnum())
+
+
+def load_posted():
+    """이전 게시 기록 → (URL 집합, 정규화 제목 집합)"""
+    import json
+    if not os.path.exists(HISTORY_FILE):
+        return set(), set()
+    try:
+        data = json.load(open(HISTORY_FILE, encoding="utf-8"))
+    except Exception:
+        return set(), set()
+    return ({e["url"] for e in data if e.get("url")},
+            {e["title"] for e in data if e.get("title")})
+
+
+def record_posted(rows):
+    """선정·게시된 기사를 기록에 추가하고 오래된 항목 정리 후 저장"""
+    import json
+    data = []
+    if os.path.exists(HISTORY_FILE):
+        try:
+            data = json.load(open(HISTORY_FILE, encoding="utf-8"))
+        except Exception:
+            data = []
+    today = datetime.now(MYT).strftime("%Y-%m-%d")
+    for r in rows:
+        url = (r[5].strip() if len(r) > 5 else "")
+        if url:
+            data.append({"date": today, "url": url,
+                         "title": _norm_title(r[2] if len(r) > 2 else "")})
+    cutoff = (datetime.now(MYT) - timedelta(days=HISTORY_KEEP_DAYS)).strftime("%Y-%m-%d")
+    data = [e for e in data if e.get("date", "") >= cutoff]
+    with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=1)
+    print(f"   📝 게시 기록 {len(data)}건 저장")
 TIMEOUT    = 12
 
 FETCH_HEADERS = {
@@ -717,6 +760,23 @@ def main():
         print(f"❌ {target_date} 날짜의 기사가 없습니다.")
         sys.exit(1)
 
+    # 2-1. 이전에 올린 기사 제외 (중복 게시 방지)
+    posted_urls, posted_titles = load_posted()
+
+    def already_posted(r):
+        url = (r[5].strip() if len(r) > 5 else "")
+        title = _norm_title(r[2] if len(r) > 2 else "")
+        return (url and url in posted_urls) or (title and title in posted_titles)
+
+    fresh_rows = [r for r in today_rows if not already_posted(r)]
+    dropped = len(today_rows) - len(fresh_rows)
+    if dropped:
+        print(f"   🔁 이전 게시와 중복 {dropped}개 제외")
+    if fresh_rows:
+        today_rows = fresh_rows
+    else:
+        print("   ⚠️ 전부 이전 게시와 중복 — 빈 카드뉴스 방지 위해 중복 제외 생략")
+
     # 3. 한국-말레이시아 연관 기사 우선 정렬 후 MAX_CARDS 개 선택
     KR_KEYWORDS = [
         "한국", "한인", "교민", "코리아", "한류", "K-pop", "K-drama", "케이팝", "케이드라마",
@@ -799,6 +859,9 @@ def main():
 
     # 인스타그램 자동 포스팅
     post_via_graph_api(image_dir, target_date)
+
+    # 게시 성공 후에만 기록 (실패 시 기록 안 됨 → 다음 실행에서 재시도 가능)
+    record_posted(selected)
 
 
 if __name__ == "__main__":
