@@ -1,9 +1,9 @@
 name: 한마당 카드뉴스 자동 포스팅
 
 on:
-  schedule:
-    # UTC 22:37 = MYT 06:37 (크롤러 06:00 이후, 혼잡한 UTC 00:00 회피로 지연 최소화)
-    - cron: '37 22 * * *'
+  # 스케줄 cron 제거: 크롤러(malaysia-headlines-crawler)가 시트 저장 직후
+  # `gh workflow run`으로 직접 트리거함 → 시트 비어있는 시각 경쟁(race) 해소.
+  # 수동 실행/크롤러 트리거 모두 workflow_dispatch 사용.
   workflow_dispatch:
 
 jobs:
