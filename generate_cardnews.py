@@ -760,6 +760,22 @@ def main():
         print(f"❌ {target_date} 날짜의 기사가 없습니다.")
         sys.exit(1)
 
+    # 2-0. 번역 실패 기사 제외 (영어 제목 그대로 / 빈 요약 = Claude 번역 실패)
+    def is_translated(r):
+        title_en = (r[2].strip() if len(r) > 2 else "")
+        title_kr = (r[3].strip() if len(r) > 3 else "")
+        summary  = (r[4].strip() if len(r) > 4 else "")
+        return bool(summary) and title_kr != title_en
+    translated = [r for r in today_rows if is_translated(r)]
+    untrans = len(today_rows) - len(translated)
+    if untrans:
+        print(f"   🈳 번역 실패 기사 {untrans}개 제외")
+    if len(translated) < 3:
+        print(f"❌ 번역된 기사가 부족({len(translated)}개). 번역 실패로 판단 — "
+              f"영어 카드뉴스 게시 방지 위해 중단. 크롤러 재실행 필요.")
+        sys.exit(1)
+    today_rows = translated
+
     # 2-1. 이전에 올린 기사 제외 (중복 게시 방지)
     posted_urls, posted_titles = load_posted()
 
