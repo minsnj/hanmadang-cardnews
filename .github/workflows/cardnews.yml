@@ -1,9 +1,14 @@
 name: 한마당 카드뉴스 자동 포스팅
 
 on:
-  # 스케줄 cron 제거: 크롤러(malaysia-headlines-crawler)가 시트 저장 직후
-  # `gh workflow run`으로 직접 트리거함 → 시트 비어있는 시각 경쟁(race) 해소.
-  # 수동 실행/크롤러 트리거 모두 workflow_dispatch 사용.
+  # 여러 시각 cron + 하루1회 멱등성(posted_today) + 번역 가드 = 자가 치유.
+  # 시트에 번역된 데이터가 준비된 첫 시각에 게시, 이미 올렸으면 건너뜀.
+  # (Mac 잠자기로 크롤러가 늦게 돌아도 다음 cron이 잡아냄)
+  # 크롤러도 저장 직후 workflow_dispatch로 트리거함(있으면 보너스).
+  schedule:
+    - cron: '0 23 * * *'   # UTC 23:00 = MYT 07:00
+    - cron: '0 1 * * *'    # UTC 01:00 = MYT 09:00
+    - cron: '0 3 * * *'    # UTC 03:00 = MYT 11:00
   workflow_dispatch:
 
 jobs:

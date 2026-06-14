@@ -57,6 +57,18 @@ def _norm_title(s):
     return "".join(ch for ch in (s or "").lower() if ch.isalnum())
 
 
+def posted_today(target_date):
+    """오늘(target_date) 이미 카드뉴스를 게시했는지 — posted_history의 날짜로 판단"""
+    import json
+    if not os.path.exists(HISTORY_FILE):
+        return False
+    try:
+        data = json.load(open(HISTORY_FILE, encoding="utf-8"))
+    except Exception:
+        return False
+    return any(e.get("date") == target_date for e in data)
+
+
 def load_posted():
     """이전 게시 기록 → (URL 집합, 정규화 제목 집합)"""
     import json
@@ -750,6 +762,11 @@ def post_story(image_dir, target_date, permalink, access_token, user_id, ig_post
 def main():
     target_date = sys.argv[1] if len(sys.argv) > 1 else datetime.now(MYT).strftime("%Y-%m-%d")
     print(f"\n🗓  대상 날짜: {target_date}")
+
+    # 0. 멱등성: 오늘 이미 카드뉴스를 게시했으면 건너뜀 (여러 cron + 크롤러 트리거 대비)
+    if posted_today(target_date):
+        print(f"✅ {target_date} 카드뉴스 이미 게시됨 — 건너뜀")
+        sys.exit(0)
 
     # 1. 시트 데이터 가져오기
     rows = fetch_sheet()
