@@ -397,7 +397,7 @@ def card_outro(outro_img, target_date):
         <div class="outro-grad"></div>
         <div class="outro-body">
           <div class="outro-logo">🍊한마당</div>
-          <div class="outro-sub">말레이시아 교민 뉴스 채널</div>
+          <div class="outro-sub">말레이시아 한인 뉴스 채널</div>
           <div class="outro-line"></div>
           <h2>더 많은 말레이시아 소식을<br>한마당에서 만나세요</h2>
           <p>매일 업데이트되는 말레이시아 실시간 뉴스<br>정치·경제·사회·문화를 한눈에</p>
@@ -565,7 +565,7 @@ def post_via_graph_api(image_dir, target_date):
         "오늘의 말레이시아 주요 소식을 한마당이 전합니다.\n"
         "스와이프해서 더 많은 뉴스를 확인하세요 👉\n\n"
         "#말레이시아뉴스 #한마당 #실시간뉴스 #말레이시아 #Malaysia "
-        f"#{target_date.replace('-', '')} #해외뉴스 #카드뉴스 #교민뉴스 #말레이시아한인 #한인생활"
+        f"#{target_date.replace('-', '')} #해외뉴스 #카드뉴스 #한인뉴스 #말레이시아한인 #한인생활"
     )
 
     def ig_post(path, data):
