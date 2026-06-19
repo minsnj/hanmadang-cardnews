@@ -1,0 +1,67 @@
+name: 스토리 링크스티커 테스트 (임시)
+
+# GitHub Actions IP에서 스토리 링크스티커가 살아남는지 검증용 (확인 후 삭제 예정)
+on:
+  workflow_dispatch:
+    inputs:
+      link_url:
+        description: "링크스티커에 넣을 URL (오늘 카드뉴스 포스트)"
+        required: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install "instagrapi==2.6.5" pillow -q
+      - name: 세션 파일 생성
+        run: echo "${{ secrets.INSTAGRAM_SESSION_B64 }}" | base64 -d > .ig_session.json
+      - name: 테스트 스토리 게시 (링크스티커)
+        env:
+          LINK_URL: ${{ github.event.inputs.link_url }}
+        run: |
+          python3 - << 'PYEOF'
+          import os, json, types
+          from instagrapi import Client
+          from instagrapi.extractors import extract_media_v1
+          from instagrapi.types import StoryLink
+          from PIL import Image
+
+          LINK = os.environ["LINK_URL"]
+          Image.new("RGB", (1080, 1920), (20, 20, 30)).save("/tmp/test.png")
+
+          cookies = json.load(open(".ig_session.json"))["cookies"]
+          cl = Client(); cl.set_locale("ko_KR"); cl.set_timezone_offset(32400)
+          for k, v in cookies.items(): cl.private.cookies.set(k, v)
+          uid = cookies.get("ds_user_id", "")
+          cl.authorization_data = {"ds_user_id": uid, "sessionid": cookies["sessionid"], "should_use_header_over_cookies": True}
+          cl.username = "hanmadang_my"
+          if "mid" in cookies: cl.mid = cookies["mid"]
+
+          _saved = {}
+          _orig = cl.private_request.__func__
+          def _pr(self, ep, *a, **k):
+              if ep == "media/validate_reel_url/": return {"status": "ok"}
+              r = _orig(self, ep, *a, **k)
+              if ep == "media/configure_to_story/" and isinstance(r, dict): _saved.clear(); _saved.update(r)
+              return r
+          cl.private_request = types.MethodType(_pr, cl)
+          def _ex(self, conf, exc, ctx):
+              m = conf.get("media") if isinstance(conf, dict) else None
+              if m is None and _saved: m = _saved.get("media")
+              if m is None: raise exc(f"{ctx} no media", response=self.last_response)
+              return extract_media_v1(m)
+          cl._extract_configured_media_or_raise = types.MethodType(_ex, cl)
+          cl.load_settings(".ig_session.json")
+
+          link = StoryLink(webUri=LINK)
+          sls = json.dumps([{"x": link.x, "y": link.y, "z": link.z, "width": link.width,
+              "height": link.height, "rotation": link.rotation, "type": "story_link",
+              "is_sticker": True, "selected_index": 0, "tap_state": 0, "link_type": "web",
+              "url": str(link.webUri), "tap_state_str_id": "link_sticker_default"}])
+          story = cl.photo_upload_to_story("/tmp/test.png", links=[link],
+                                           extra_data={"story_link_stickers": sls})
+          print(f"STORY_PK={story.pk}")
+          PYEOF
