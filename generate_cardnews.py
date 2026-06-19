@@ -622,12 +622,13 @@ def post_via_graph_api(image_dir, target_date):
     except Exception as e:
         print(f"⚠️  permalink 조회 실패: {e}")
 
-    # ⚠️ 스토리 포스팅을 여기서 하지 않는다.
-    # GitHub Actions IP는 인스타그램이 스토리 '링크스티커'를 차단하므로
-    # (링크 없는 스토리만 올라감) 스토리는 로컬 Mac launchd(auto_story.py)가
-    # 링크스티커 포함해서 단독으로 담당한다. 여기서 post_story()를 호출하면
-    # 링크 없는 스토리가 중복으로 올라가므로 절대 호출하지 말 것.
-    # post_story(image_dir, target_date, permalink, access_token, user_id, ig_post)  # 사용 금지
+    # 6. 스토리 포스팅 (링크스티커 포함) — 클라우드에서 단독 실행 (Mac 의존 제거)
+    # story_link_stickers extra_data 수정 적용됨. 세션은 INSTAGRAM_SESSION_B64 시크릿.
+    if permalink:
+        try:
+            post_story(image_dir, target_date, permalink, access_token, user_id, ig_post)
+        except Exception as e:
+            print(f"⚠️  스토리 포스팅 실패(카드뉴스는 정상): {e}")
 
 
 def generate_story_png(first_card_path, output_dir):
@@ -750,9 +751,20 @@ def post_story(image_dir, target_date, permalink, access_token, user_id, ig_post
 
     # ── 스토리 업로드 ──────────────────────────────────────
     print("\n📤 스토리 업로드 중 (링크스티커)...")
+    link = StoryLink(webUri=permalink)
+    # 핵심 수정: tap_models 외에 story_link_stickers를 명시적으로 전달해야
+    # 링크스티커가 실제로 붙음 (이게 없으면 인스타가 무시함)
+    story_link_stickers = json.dumps([{
+        "x": link.x, "y": link.y, "z": link.z,
+        "width": link.width, "height": link.height, "rotation": link.rotation,
+        "type": "story_link", "is_sticker": True, "selected_index": 0, "tap_state": 0,
+        "link_type": "web", "url": str(link.webUri),
+        "tap_state_str_id": "link_sticker_default",
+    }])
     story = cl.photo_upload_to_story(
         str(story_png),
-        links=[StoryLink(webUri=permalink)],
+        links=[link],
+        extra_data={"story_link_stickers": story_link_stickers},
     )
     print(f"   ✅ 스토리 게시 완료! ID: {story.pk}")
     print(f"   🔗 링크스티커: {permalink}")
