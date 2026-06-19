@@ -299,8 +299,8 @@ CSS = """
   .art-grad { position: absolute; inset: 0; background: linear-gradient(to top, rgba(5,5,5,0.97) 0%, rgba(5,5,5,0.6) 42%, rgba(0,0,0,0.1) 100%); }
   .art-body { position: absolute; bottom: 0; left: 0; right: 0; z-index: 5; padding: 0 38px 72px; }
   .art-body h2 { font-size: 40px; font-weight: 900; color: #fff; line-height: 1.22; margin-bottom: 16px; word-break: keep-all; }
-  .art-body p { font-size: 14px; color: rgba(255,255,255,0.78); line-height: 1.78; word-break: keep-all; }
-  .art-body .src { font-size: 11px; color: rgba(255,255,255,0.3); margin-top: 14px; }
+  .art-body p { font-size: 20px; color: rgba(255,255,255,0.82); line-height: 1.7; word-break: keep-all; }
+  .art-body .src { font-size: 13px; color: rgba(255,255,255,0.3); margin-top: 14px; }
 
   /* OUTRO */
   .card-outro { background: #111; }
