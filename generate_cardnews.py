@@ -194,6 +194,16 @@ OG_PATTERNS = [
     r'<meta[^>]+content=["\'](https?://[^"\'>\s]+)["\'][^>]+name=["\']twitter:image["\']',
 ]
 
+# OG 이미지가 기사 사진이 아니라 사이트 로고/기본이미지인 경우 (배경 안 맞는 원인)
+_GENERIC_IMG = ["logo", "/themes/", "/theme/", "placeholder", "default.",
+                "default-", "/og-image", "share-image", "socmedia.png", "favicon"]
+
+
+def _is_generic_image(img_url):
+    u = (img_url or "").lower()
+    return any(g in u for g in _GENERIC_IMG)
+
+
 def get_og_image(url, fallback=""):
     if not url or not url.startswith("http"):
         return fallback
@@ -203,8 +213,10 @@ def get_og_image(url, fallback=""):
             m = re.search(pat, html, re.IGNORECASE)
             if m:
                 img = m.group(1).strip()
-                if img and not img.endswith(".svg"):
+                # 로고/기본 이미지면 기사와 안 맞으므로 카테고리 사진으로 대체
+                if img and not img.endswith(".svg") and not _is_generic_image(img):
                     return img
+        print(f"   🖼  기사 전용 사진 없음 → 카테고리 사진 사용 ({url[:45]}...)")
     except Exception as e:
         print(f"   ⚠️  이미지 추출 실패 ({url[:60]}...): {e}")
     return fallback
