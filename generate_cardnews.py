@@ -204,19 +204,57 @@ def _is_generic_image(img_url):
     return any(g in u for g in _GENERIC_IMG)
 
 
+def _is_text_graphic(img_bytes):
+    """OG 이미지가 '텍스트 위주 그래픽'(섹션 배너·로고·부처 엠블럼)인지 OCR로 판정.
+    The Star 'Other News and Views' 배너, Bernama 부처 엠블럼 등 기사 사진이 아닌
+    그래픽을 걸러내기 위함. 글자가 이미지의 3% 이상 + 3단어 이상이면 그래픽으로 본다.
+    (실제 보도 사진은 글자가 거의 없음 — OCR 실측으로 검증한 임계값)
+    """
+    try:
+        import io, pytesseract
+        from PIL import Image
+        im = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+        W, H = im.size
+        if W * H == 0:
+            return False
+        d = pytesseract.image_to_data(im, output_type=pytesseract.Output.DICT)
+        area = 0
+        words = 0
+        for j, t in enumerate(d["text"]):
+            if t.strip() and len(t.strip()) >= 2 and int(d["conf"][j]) > 50:
+                area += d["width"][j] * d["height"][j]
+                words += 1
+        return (area / (W * H) * 100 > 3.0) and words >= 3
+    except Exception:
+        return False  # OCR 불가 시 이미지 유지 (안전)
+
+
 def get_og_image(url, fallback=""):
     if not url or not url.startswith("http"):
         return fallback
     try:
         html = http_get(url, timeout=10)
+        img = ""
         for pat in OG_PATTERNS:
             m = re.search(pat, html, re.IGNORECASE)
             if m:
-                img = m.group(1).strip()
-                # 로고/기본 이미지면 기사와 안 맞으므로 카테고리 사진으로 대체
-                if img and not img.endswith(".svg") and not _is_generic_image(img):
-                    return img
-        print(f"   🖼  기사 전용 사진 없음 → 카테고리 사진 사용 ({url[:45]}...)")
+                cand = m.group(1).strip()
+                if cand and not cand.endswith(".svg") and not _is_generic_image(cand):
+                    img = cand
+                    break
+        if not img:
+            print(f"   🖼  기사 전용 사진 없음 → 카테고리 사진 ({url[:45]}...)")
+            return fallback
+        # 실제 사진인지(텍스트 배너/로고/엠블럼 아닌지) 다운로드해 OCR로 확인
+        try:
+            req = urllib.request.Request(img, headers=FETCH_HEADERS)
+            data = urllib.request.urlopen(req, timeout=10).read()
+            if _is_text_graphic(data):
+                print(f"   🚫 텍스트 배너/로고 이미지 → 카테고리 사진 ({img[:50]}...)")
+                return fallback
+        except Exception:
+            pass  # 다운로드/OCR 실패 시 원본 사용
+        return img
     except Exception as e:
         print(f"   ⚠️  이미지 추출 실패 ({url[:60]}...): {e}")
     return fallback
