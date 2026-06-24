@@ -634,13 +634,15 @@ def post_via_graph_api(image_dir, target_date):
     except Exception as e:
         print(f"⚠️  permalink 조회 실패: {e}")
 
-    # 6. 스토리 포스팅 (링크스티커 포함) — 클라우드에서 단독 실행 (Mac 의존 제거)
-    # story_link_stickers extra_data 수정 적용됨. 세션은 INSTAGRAM_SESSION_B64 시크릿.
-    if permalink:
-        try:
-            post_story(image_dir, target_date, permalink, access_token, user_id, ig_post)
-        except Exception as e:
-            print(f"⚠️  스토리 포스팅 실패(카드뉴스는 정상): {e}")
+    # 6. 스토리 포스팅 — ⛔ 비활성화 (2026-06-24)
+    # 인스타 "자동화 행위 감지" 경고로 위험 줄이려 스토리(비공식 instagrapi) 중단.
+    # 카드뉴스 carousel은 공식 Graph API라 유지. 스토리 재개하려면 아래 주석 해제.
+    # if permalink:
+    #     try:
+    #         post_story(image_dir, target_date, permalink, access_token, user_id, ig_post)
+    #     except Exception as e:
+    #         print(f"⚠️  스토리 포스팅 실패(카드뉴스는 정상): {e}")
+    print("ℹ️  스토리 포스팅 비활성화됨 (계정 안전 위해 카드뉴스만 게시)")
 
 
 def generate_story_png(first_card_path, output_dir):
