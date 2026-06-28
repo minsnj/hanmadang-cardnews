@@ -1,14 +1,13 @@
 name: 한마당 카드뉴스 자동 포스팅
 
 on:
-  # 여러 시각 cron + 하루1회 멱등성(posted_today) + 번역 가드 = 자가 치유.
-  # 시트에 번역된 데이터가 준비된 첫 시각에 게시, 이미 올렸으면 건너뜀.
-  # (Mac 잠자기로 크롤러가 늦게 돌아도 다음 cron이 잡아냄)
-  # 크롤러도 저장 직후 workflow_dispatch로 트리거함(있으면 보너스).
+  # 게시는 크롤러(crawl.yml)가 시트 저장 직후 workflow_dispatch로 트리거(주 경로, ~MYT 07:05).
+  # 아래 cron은 '백업'만: 크롤러 트리거 실패 시 늦게라도 잡아냄(그땐 posted_today로 건너뜀).
+  # ⚠️ UTC 23:00(MYT 07:00) cron 제거함 — 크롤러 dispatch와 거의 동시에 떠서
+  #    posted_history 커밋 전에 둘 다 게시되는 '중복 게시' race가 있었음(2026-06-28 수정).
   schedule:
-    - cron: '0 23 * * *'   # UTC 23:00 = MYT 07:00
-    - cron: '0 1 * * *'    # UTC 01:00 = MYT 09:00
-    - cron: '0 3 * * *'    # UTC 03:00 = MYT 11:00
+    - cron: '0 1 * * *'    # UTC 01:00 = MYT 09:00 (백업)
+    - cron: '0 3 * * *'    # UTC 03:00 = MYT 11:00 (백업)
   workflow_dispatch:
 
 jobs:
