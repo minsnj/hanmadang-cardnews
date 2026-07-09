@@ -229,35 +229,51 @@ def _is_text_graphic(img_bytes):
         return False  # OCR 불가 시 이미지 유지 (안전)
 
 
+def _download_bytes(url, timeout=12):
+    req = urllib.request.Request(url, headers=FETCH_HEADERS)
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read()
+
+
+def _to_data_uri(data, src_url=""):
+    import base64
+    u = (src_url or "").lower()
+    ext = "png" if u.endswith(".png") else ("webp" if u.endswith(".webp") else "jpeg")
+    return f"data:image/{ext};base64," + base64.b64encode(data).decode()
+
+
 def get_og_image(url, fallback=""):
-    if not url or not url.startswith("http"):
-        return fallback
-    try:
-        html = http_get(url, timeout=10)
-        img = ""
-        for pat in OG_PATTERNS:
-            m = re.search(pat, html, re.IGNORECASE)
-            if m:
-                cand = m.group(1).strip()
-                if cand and not cand.endswith(".svg") and not _is_generic_image(cand):
-                    img = cand
-                    break
-        if not img:
-            print(f"   🖼  기사 전용 사진 없음 → 카테고리 사진 ({url[:45]}...)")
-            return fallback
-        # 실제 사진인지(텍스트 배너/로고/엠블럼 아닌지) 다운로드해 OCR로 확인
+    """기사 대표 이미지를 골라 base64 data URI(임베드)로 반환.
+    클라우드(GitHub Actions) 렌더 시 외부 이미지 요청이 IP차단/지연으로 실패해
+    배경이 검게 나오는 문제 방지 — 이미지를 내려받아 카드에 직접 임베드한다.
+    """
+    # 1) 기사 OG 이미지 후보 선택 → 다운로드 → 텍스트그래픽(배너/로고) 아니면 임베드
+    if url and url.startswith("http"):
         try:
-            req = urllib.request.Request(img, headers=FETCH_HEADERS)
-            data = urllib.request.urlopen(req, timeout=10).read()
-            if _is_text_graphic(data):
-                print(f"   🚫 텍스트 배너/로고 이미지 → 카테고리 사진 ({img[:50]}...)")
-                return fallback
-        except Exception:
-            pass  # 다운로드/OCR 실패 시 원본 사용
-        return img
-    except Exception as e:
-        print(f"   ⚠️  이미지 추출 실패 ({url[:60]}...): {e}")
-    return fallback
+            html = http_get(url, timeout=10)
+            img = ""
+            for pat in OG_PATTERNS:
+                m = re.search(pat, html, re.IGNORECASE)
+                if m:
+                    cand = m.group(1).strip()
+                    if cand and not cand.endswith(".svg") and not _is_generic_image(cand):
+                        img = cand
+                        break
+            if img:
+                data = _download_bytes(img)
+                if _is_text_graphic(data):
+                    print(f"   🚫 텍스트 배너/로고 이미지 → 카테고리 사진 ({img[:50]}...)")
+                else:
+                    return _to_data_uri(data, img)
+            else:
+                print(f"   🖼  기사 전용 사진 없음 → 카테고리 사진 ({url[:45]}...)")
+        except Exception as e:
+            print(f"   ⚠️  이미지 추출 실패 ({url[:55]}...): {e}")
+    # 2) 카테고리 대체 이미지도 임베드 (실패 시 최후로 URL 그대로)
+    try:
+        return _to_data_uri(_download_bytes(fallback), fallback)
+    except Exception:
+        return fallback
 
 
 # ── 요약 ─────────────────────────────────────────────
