@@ -566,6 +566,73 @@ def _wait_assets_public(urls, timeout=120):
             time.sleep(3)
 
 
+def _gh_api(args, payload=None):
+    """gh api 호출 후 JSON 반환. payload는 --input 으로 전달."""
+    import subprocess, json, tempfile
+    cmd = ["gh", "api"] + args
+    path = None
+    if payload is not None:
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump(payload, f)
+            path = f.name
+        cmd += ["--input", path]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if path:
+        os.unlink(path)
+    if r.returncode != 0:
+        raise RuntimeError(f"gh api 실패({' '.join(args[:3])}): {r.stderr[:300]}")
+    return json.loads(r.stdout) if r.stdout.strip() else {}
+
+
+def upload_to_raw_branch(image_dir, target_date):
+    """이미지를 별도 브랜치에 올리고 raw.githubusercontent 공개 URL 반환.
+
+    릴리스 download URL은 GitHub이 항상 application/octet-stream 으로 서빙해서
+    인스타 Graph API가 "Only photo or video can be accepted"(400)로 거부한다.
+    (업로드 시 image/png 로 지정해도 서빙 타입은 안 바뀜 — 2026-09-10 미게시 사고)
+    raw.githubusercontent.com 은 image/png 로 서빙되므로 안정적이다.
+
+    브랜치는 매일 '부모 없는 커밋'으로 덮어써서 히스토리·용량이 쌓이지 않게 하고,
+    URL엔 커밋 SHA를 써서 CDN 캐시로 옛 이미지가 나가는 일을 막는다.
+    """
+    import base64
+    repo   = os.environ.get("GITHUB_REPOSITORY", "minsnj/hanmadang-cardnews")
+    branch = "cardnews-images"
+
+    images = sorted(
+        glob.glob(os.path.join(image_dir, "템플릿*.png")),
+        key=lambda x: int(re.search(r'\d+', os.path.basename(x)).group())
+    )
+    if not images:
+        raise RuntimeError("업로드할 이미지가 없습니다.")
+
+    tree = []
+    for i, src in enumerate(images):
+        with open(src, "rb") as f:
+            content = base64.b64encode(f.read()).decode()
+        blob = _gh_api(["-X", "POST", f"repos/{repo}/git/blobs"],
+                       {"content": content, "encoding": "base64"})
+        tree.append({"path": f"{target_date}/card{i+1:02d}.png",
+                     "mode": "100644", "type": "blob", "sha": blob["sha"]})
+
+    tree_obj = _gh_api(["-X", "POST", f"repos/{repo}/git/trees"], {"tree": tree})
+    commit = _gh_api(["-X", "POST", f"repos/{repo}/git/commits"],
+                     {"message": f"카드뉴스 이미지 {target_date}",
+                      "tree": tree_obj["sha"], "parents": []})
+    try:
+        _gh_api(["-X", "PATCH", f"repos/{repo}/git/refs/heads/{branch}"],
+                {"sha": commit["sha"], "force": True})
+    except RuntimeError:
+        _gh_api(["-X", "POST", f"repos/{repo}/git/refs"],
+                {"ref": f"refs/heads/{branch}", "sha": commit["sha"]})
+
+    urls = [f"https://raw.githubusercontent.com/{repo}/{commit['sha']}"
+            f"/{target_date}/card{i+1:02d}.png" for i in range(len(images))]
+    _wait_assets_public(urls)
+    print(f"   {len(urls)}개 이미지 업로드 완료 (raw)")
+    return urls
+
+
 def upload_to_github_release(image_dir, target_date):
     """이미지를 GitHub Release에 업로드하고 공개 URL 목록 반환"""
     import subprocess, shutil
@@ -600,7 +667,6 @@ def upload_to_github_release(image_dir, target_date):
 
     base = f"https://github.com/{repo}/releases/download/{tag}"
     urls = [f"{base}/card{i+1:02d}.png" for i in range(len(safe_paths))]
-    _wait_assets_public(urls)  # 인스타가 가져갈 수 있을 때까지 확인
     print(f"   {len(urls)}개 이미지 업로드 완료")
     return urls
 
@@ -672,7 +738,8 @@ def post_via_graph_api(image_dir, target_date):
 
     # 1. 이미지 GitHub Release에 업로드
     print("\n📤 이미지 업로드 중...")
-    image_urls = upload_to_github_release(image_dir, target_date)
+    upload_to_github_release(image_dir, target_date)      # 아카이브/웹사이트용
+    image_urls = upload_to_raw_branch(image_dir, target_date)  # 인스타는 raw URL
     _time.sleep(5)  # Release 전파 대기
 
     # 2. 이미지 컨테이너 생성
