@@ -688,12 +688,16 @@ def refresh_instagram_token(access_token):
             result = subprocess.run(
                 ["gh", "secret", "set", "INSTAGRAM_ACCESS_TOKEN", "--body", new_token, "--repo", repo],
                 capture_output=True, text=True,
-                env={**os.environ, "GH_TOKEN": os.environ.get("GH_TOKEN", os.environ.get("GH_PAT", ""))}
+                # GH_TOKEN(=GITHUB_TOKEN)은 시크릿 쓰기 스코프가 아예 없어 항상 403.
+                # 시크릿 갱신은 repo 스코프가 있는 GH_PAT로만 가능하므로 이쪽을 우선한다.
+                env={**os.environ, "GH_TOKEN": os.environ.get("GH_PAT") or os.environ.get("GH_TOKEN", "")}
             )
             if result.returncode == 0:
                 print("   ✅ 토큰 갱신 및 Secret 업데이트 완료")
             else:
                 print(f"   ⚠️  Secret 업데이트 실패 (포스팅은 계속): {result.stderr.strip()}")
+                print("      → GH_PAT에 repo 스코프가 있는지 확인 필요 "
+                      "(없으면 토큰 만료 시 게시가 통째로 실패함)")
         return new_token
     except Exception as e:
         print(f"⚠️  토큰 갱신 실패 (포스팅은 계속): {e}")
