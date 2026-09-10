@@ -542,6 +542,30 @@ def export_images(html_path, total_cards, target_date):
 
 
 # ── 이미지 GitHub Release 업로드 ──────────────────────
+def _wait_assets_public(urls, timeout=120):
+    """릴리스 에셋이 외부에서 익명으로 받아지는지 확인될 때까지 대기.
+
+    gh release create 직후엔 아직 전파 전이라, 인스타 Graph API가
+    "The media could not be fetched from this URI"(400)로 실패한다.
+    (2026-09-10 카드뉴스 미게시 사고의 원인)
+    """
+    import time
+    deadline = time.time() + timeout
+    for url in urls:
+        while True:
+            try:
+                req = urllib.request.Request(
+                    url, method="HEAD", headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req, timeout=20) as r:
+                    if r.status == 200:
+                        break
+            except Exception:
+                pass
+            if time.time() >= deadline:
+                raise RuntimeError(f"릴리스 에셋 공개 대기 시간 초과: {url}")
+            time.sleep(3)
+
+
 def upload_to_github_release(image_dir, target_date):
     """이미지를 GitHub Release에 업로드하고 공개 URL 목록 반환"""
     import subprocess, shutil
@@ -576,6 +600,7 @@ def upload_to_github_release(image_dir, target_date):
 
     base = f"https://github.com/{repo}/releases/download/{tag}"
     urls = [f"{base}/card{i+1:02d}.png" for i in range(len(safe_paths))]
+    _wait_assets_public(urls)  # 인스타가 가져갈 수 있을 때까지 확인
     print(f"   {len(urls)}개 이미지 업로드 완료")
     return urls
 
@@ -654,10 +679,18 @@ def post_via_graph_api(image_dir, target_date):
     print(f"\n📸 이미지 컨테이너 생성 중 ({len(image_urls)}개)...")
     container_ids = []
     for i, img_url in enumerate(image_urls):
-        res = ig_post(f"/{user_id}/media", {
-            "image_url":        img_url,
-            "is_carousel_item": "true",
-        })
+        for attempt in range(3):
+            try:
+                res = ig_post(f"/{user_id}/media", {
+                    "image_url":        img_url,
+                    "is_carousel_item": "true",
+                })
+                break
+            except RuntimeError as e:
+                if attempt == 2:
+                    raise
+                print(f"   ⚠️  컨테이너 생성 실패({attempt+1}/3), 20초 후 재시도: {str(e)[:120]}")
+                _time.sleep(20)
         container_ids.append(res["id"])
         print(f"   [{i+1}/{len(image_urls)}] {res['id']}")
         _time.sleep(1)
